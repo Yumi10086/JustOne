@@ -1,19 +1,168 @@
-.md
+# ==========================
+# 操作系统文件
+# ==========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-!README.md
-
-# Python
-__pycache__/
-*.pyc
-
-# Env
-.env
-
-# 虚拟环境
-venv
-
-# VSCode
+# ==========================
+# 编辑器 / IDE
+# ==========================
+.idea/
 .vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+.codespaces/
+.vs/
 
-# Results
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+
+# ==========================
+# Node.js（前端 / Web UI）
+# ==========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.yarn/
+
+# ==========================
+# 依赖 & 构建产物
+# ==========================
+vendor/
+dist/
+build/
+out/
+target/
+.release/
+
+# ==========================
+# 子域名 / 扫描结果（核心）
+# ==========================
+# 扫描结果
 results/
+output/
+scans/
+reports/
+exports/
+*.txt
+*.json
+*.csv
+*.xml
+
+# 子域名原始数据
+subdomains/
+domains/
+assets/
+hosts/
+ips/
+
+# 工具输出
+*.amass
+*.nuclei
+*.httpx
+*.subfinder
+*.massdns
+*.shuffledns
+*.findomain
+*.assetfinder
+*.crtsh
+
+# ==========================
+# 敏感信息（非常重要）
+# ==========================
+.env
+.env.*
+config.yaml
+config.yml
+secrets.yaml
+secrets.yml
+credentials.json
+tokens.json
+api.key
+*.pem
+*.key
+*.crt
+
+# ==========================
+# 数据库
+# ==========================
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+
+# ==========================
+# 日志 & 缓存
+# ==========================
+logs/
+*.log
+*.cache
+.cache/
+.temp/
+tmp/
+debug.log
+error.log
+
+# ==========================
+# 测试 & 覆盖率
+# ==========================
+coverage/
+.pytest_cache/
+.mypy_cache/
+.nyc_output/
+.tox/
+
+# ==========================
+# Docker
+# ==========================
+.dockerignore
+docker-compose.override.yml
+
+# ==========================
+# 文档（按需）
+# ==========================
+!README.md
+!LICENSE
+!CHANGELOG.md
+
+# ==========================
+# 其他
+# ==========================
+*.pid
+*.seed
+*.swp
+*.bak
+*.old
+
+# ==========================
+# 自定义
+# ==========================
+*.md
+DevLog/
