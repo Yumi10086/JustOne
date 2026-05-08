@@ -18,14 +18,16 @@ def init_logging(debug: bool = False):
     fmt = (
         "<green>{time:HH:mm:ss}</green> "
         "[<level>{level: <5}</level>] "
-        "<cyan>{message}</cyan>"
+        "<cyan>{name}:{line}</cyan> "
+        "<level>{message}</level>"
     )
 
     logger.add(sys.stderr, level=level, format=fmt)
     logger.add(
         log_path,
         level="DEBUG",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} - {message}",
+        encoding="utf-8",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <5} | {name}.{function}:{line} | {message}",
         rotation="10 MB",
         retention="7 days"
     )

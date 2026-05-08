@@ -1,3 +1,19 @@
 .md
 
 !README.md
+
+# Python
+__pycache__/
+*.pyc
+
+# Env
+.env
+
+# 虚拟环境
+venv
+
+# VSCode
+.vscode/
+
+# Results
+results/
