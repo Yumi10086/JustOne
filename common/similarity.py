@@ -1,27 +1,45 @@
 """
-根据网页结构判断页面相似性(Determine page similarity based on HTML page structure)
-判断方法：根据网页的DOM树确定网页的模板特征向量，对模板特征向量计算网页结构相似性。
+网页相似度计算模块
+
+根据网页结构判断页面相似性。判断方法：根据网页的 DOM 树确定网页的模板特征向量，
+对模板特征向量计算网页结构相似性。
+
 来源地址：https://github.com/SPuerBRead/HTMLSimilarity
 计算参考: https://patents.google.com/patent/CN101694668B/zh
 """
-from treelib import Tree
-from bs4 import BeautifulSoup
+
 import bs4
+from bs4 import BeautifulSoup
+from treelib import Tree
 
 
-class DOMTree(object):
+class DOMTree:
+    """DOM 树节点类"""
+
     def __init__(self, label, attrs):
         self.label = label
         self.attrs = attrs
 
 
-class HTMLParser(object):
+class HTMLParser:
+    """HTML 解析器类"""
+
     def __init__(self, html):
+        """
+        初始化 HTML 解析器
+
+        :param str html: HTML 文档字符串
+        """
         self.dom_id = 1
         self.dom_tree = Tree()
         self.bs_html = BeautifulSoup(html, 'html.parser')
 
     def get_dom_structure_tree(self):
+        """
+        获取 DOM 结构树
+
+        :return: DOM 树对象
+        """
         for content in self.bs_html.contents:
             if isinstance(content, bs4.element.Tag):
                 self.bs_html = content
@@ -29,6 +47,7 @@ class HTMLParser(object):
         return self.dom_tree
 
     def recursive_descendants(self, descendants, parent_id):
+        """递归构建 DOM 树"""
         if self.dom_id == 1:
             self.dom_tree.create_node(descendants.name, self.dom_id,
                                       data=DOMTree(descendants.name, descendants.attrs))
@@ -41,8 +60,16 @@ class HTMLParser(object):
                 self.recursive_descendants(child, self.dom_id - 1)
 
 
-class Converter(object):
+class Converter:
+    """特征向量转换器类"""
+
     def __init__(self, dom_tree, dimension):
+        """
+        初始化转换器
+
+        :param dom_tree: DOM 树对象
+        :param int dimension: 特征向量维度
+        """
         self.dom_tree = dom_tree
         self.node_info_list = []
         self.dimension = dimension
@@ -51,6 +78,11 @@ class Converter(object):
         self.dom_eigenvector = {}.fromkeys(range(0, dimension), 0)
 
     def get_eigenvector(self):
+        """
+        获取特征向量
+
+        :return: 特征向量字典
+        """
         for node_id in range(1, self.dom_tree.size() + 1):
             node = self.dom_tree.get_node(node_id)
             node_feature = self.create_feature(node)
@@ -61,6 +93,12 @@ class Converter(object):
 
     @staticmethod
     def create_feature(node):
+        """
+        创建节点特征
+
+        :param node: 树节点
+        :return: 特征字符串
+        """
         node_attr_list = []
         node_feature = node.data.label + '|'
         for attr in node.data.attrs.keys():
@@ -70,9 +108,23 @@ class Converter(object):
 
     @staticmethod
     def feature_hash(node_feature):
+        """
+        特征哈希
+
+        :param node_feature: 特征字符串
+        :return: 哈希值
+        """
         return abs(hash(node_feature)) % (10 ** 8)
 
     def calculate_weight(self, node, node_id, feature_hash):
+        """
+        计算节点权重
+
+        :param node: 树节点
+        :param node_id: 节点 ID
+        :param feature_hash: 特征哈希值
+        :return: 权重值
+        """
         brother_node_count = 0
         depth = self.dom_tree.depth(node)
         for brother_node in self.dom_tree.siblings(node_id):
@@ -88,28 +140,42 @@ class Converter(object):
         return node_weight
 
     def construct_eigenvector(self, feature_hash, node_weight):
+        """
+        构建特征向量
+
+        :param feature_hash: 特征哈希值
+        :param node_weight: 节点权重
+        """
         feature_hash = feature_hash % self.dimension
         self.dom_eigenvector[feature_hash] += node_weight
 
 
 def calc_pseudodistance(dom1_eigenvector, dom2_eigenvector, dimension):
+    """
+    计算伪距离
+
+    :param dom1_eigenvector: 第一个文档的特征向量
+    :param dom2_eigenvector: 第二个文档的特征向量
+    :param int dimension: 维数
+    :return: 伪距离值
+    """
     a, b = 0, 0
     for i in range(dimension):
-        a += dom1_eigenvector[i]-dom2_eigenvector[i]
+        a += dom1_eigenvector[i] - dom2_eigenvector[i]
         if dom1_eigenvector[i] and dom2_eigenvector[i]:
             b += dom1_eigenvector[i] + dom2_eigenvector[i]
-    pseudodistance = abs(a)/b
+    pseudodistance = abs(a) / b
     return pseudodistance
 
 
 def get_pseudodistance(html_doc1, html_doc2, dimension=5000):
     """
-    获取html文档结构相似度
+    获取 HTML 文档结构相似度的伪距离
 
-    :param str html_doc1: html文档
-    :param str html_doc2: html文档
+    :param str html_doc1: HTML 文档
+    :param str html_doc2: HTML 文档
     :param int dimension: 降维后的维数
-    :return 伪距离
+    :return: 伪距离值
     """
     hp1 = HTMLParser(html_doc1)
     html_doc1_dom_tree = hp1.get_dom_structure_tree()
@@ -124,12 +190,12 @@ def get_pseudodistance(html_doc1, html_doc2, dimension=5000):
 
 def is_similar(html_doc1, html_doc2, dimension=5000):
     """
-    根据计算出的伪距离来判断是否html页面结构相似
+    根据计算出的伪距离来判断 HTML 页面结构是否相似
 
-    :param str html_doc1: html文档
-    :param str html_doc2: html文档
+    :param str html_doc1: HTML 文档
+    :param str html_doc2: HTML 文档
     :param int dimension: 降维后的维数
-    :return 是否相似（伪距离value<0.2时相似，value>0.2时不相似）
+    :return: 是否相似（伪距离 < 0.2 时相似，> 0.2 时不相似）
     """
     value = get_pseudodistance(html_doc1, html_doc2, dimension)
     if value > 0.2:

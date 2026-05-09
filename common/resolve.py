@@ -1,19 +1,36 @@
-import gc
+"""
+DNS 解析模块
+"""
+
 import json
+from pathlib import Path
+from typing import List, Dict, Optional, Callable
+
+import dns.exception
+import dns.resolver
 
 from config.logging import logger
-from config import settings
-from common import utils
+
+resolve_config = {
+    'project_root': Path(__file__).parent.parent,
+    'results_dir': Path(__file__).parent.parent / 'results',
+    'dns_nameservers': ['223.5.5.5', '119.29.29.29', '114.114.114.114', '8.8.8.8', '1.1.1.1'],
+}
+
+
+def set_resolve_config(config: dict):
+    """设置全局解析配置"""
+    resolve_config.update(config)
 
 
 def filter_subdomain(data):
     """
-    过滤出无解析内容的子域到新的子域列表
+    过滤出没有 IP 的子域
 
     :param list data: 待过滤的数据列表
-    :return: 符合条件的子域列表
+    :return: 待解析的子域列表
     """
-    logger.debug(f'Filtering subdomains to be resolved')
+    logger.debug('正在过滤需要解析的子域名')
     subdomains = []
     for infos in data:
         if not infos.get('ip'):
@@ -28,15 +45,15 @@ def update_data(data, infos):
     更新解析结果
 
     :param list data: 待更新的数据列表
-    :param dict infos: 子域有关结果信息
+    :param dict infos: 子域解析信息
     :return: 更新后的数据列表
     """
-    logger.debug(f'Updating resolved results')
+    logger.debug('正在更新解析结果')
     if not infos:
-        logger.warning(f'No valid resolved result')
+        logger.warning('没有有效的解析结果')
         return data
     new_data = list()
-    for index, items in enumerate(data):
+    for items in data:
         if items.get('ip'):
             new_data.append(items)
             continue
@@ -46,128 +63,106 @@ def update_data(data, infos):
             items.update(record)
             new_data.append(items)
         else:
-            subdomain = items.get('subdomain')
-            logger.debug(f'{subdomain} resolution has no result')
+            logger.debug(f'{subdomain} 解析无结果')
     return new_data
 
 
-def save_db(name, data):
+def resolve_domain(subdomain: str, nameservers: List[str] = None) -> Optional[Dict]:
     """
-    Save resolved results to database
+    解析单个域名
 
-    :param str  name: table name
-    :param list data: data to be saved
+    :param str subdomain: 要解析的子域名
+    :param list nameservers: DNS 服务器列表
+    :return: 解析信息字典，解析失败返回 None
     """
-    logger.info(f'Saving resolved results')
-    utils.save_to_db(name, data, 'resolve')
+    info = {'subdomain': subdomain, 'resolve': 0, 'alive': 0}
+    ns = nameservers or resolve_config.get('dns_nameservers')
 
+    resolver = dns.resolver.Resolver()
+    resolver.nameservers = ns
+    resolver.timeout = 5
+    resolver.lifetime = 10
 
-def save_subdomains(save_path, subdomain_list):
-    logger.debug(f'Saving resolved subdomain')
-    subdomain_data = '\n'.join(subdomain_list)
-    if not utils.save_to_file(save_path, subdomain_data):
-        logger.error('Save resolved subdomain error')
-        exit(1)
+    try:
+        a_records = resolver.resolve(subdomain, 'A')
+        ips = [str(rdata) for rdata in a_records]
+        info['resolve'] = 1
+        info['alive'] = 1
+        info['ip'] = ','.join(ips)
+        info['reason'] = 'OK'
 
-
-def gen_infos(data, qname, info, infos):
-    flag = False
-    cnames = list()
-    ips = list()
-    ttl = list()
-    answers = data.get('answers')
-    for answer in answers:
-        if answer.get('type') == 'A':
-            flag = True
-            name = answer.get('name')
-            cname = name[:-1].lower()
-            cnames.append(cname)
-            ip = answer.get('data')
-            ips.append(ip)
-            ttl.append(str(answer.get('ttl')))
-            info['resolve'] = 1
-            info['reason'] = 'OK'
+        try:
+            cname_records = resolver.resolve(subdomain, 'CNAME')
+            cnames = [str(rdata) for rdata in cname_records]
             info['cname'] = ','.join(cnames)
-            info['ip'] = ','.join(ips)
-            info['ttl'] = ','.join(ttl)
-            infos[qname] = info
-    if not flag:
-        logger.debug(f'Resolving {qname} have not a record')
-        info['alive'] = 0
-        info['resolve'] = 0
-        info['reason'] = 'NoARecord'
-        infos[qname] = info
-    return infos
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers):
+            pass
+
+        return info
+
+    except dns.resolver.NXDOMAIN:
+        info['reason'] = 'NXDOMAIN'
+        return info
+    except dns.resolver.NoAnswer:
+        info['reason'] = 'NoAnswer'
+        return info
+    except dns.exception.Timeout:
+        info['reason'] = 'Timeout'
+        return info
+    except Exception as e:
+        logger.debug(f'解析 {subdomain} 时出错: {e}')
+        info['reason'] = f'错误: {type(e).__name__}'
+        return info
 
 
-def deal_output(output_path):
-    logger.info(f'Processing resolved results')
-    infos = dict()
-    with open(output_path) as fd:
-        for line in fd:
-            line = line.strip()
-            try:
-                items = json.loads(line)
-            except Exception as e:
-                logger.error(e)
-                logger.error(f'Error resolve line {line}, skip this line')
-                continue
-            info = dict()
-            info['resolver'] = items.get('resolver')
-            qname = items.get('name')[:-1]
-            status = items.get('status')
-            if status != 'NOERROR':
-                logger.debug(f'Resolving {qname}: {status}')
-                continue
-            data = items.get('data')
-            if 'answers' not in data:
-                logger.debug(f'Resolving {qname} have not any answers')
-                info['alive'] = 0
-                info['resolve'] = 0
-                info['reason'] = 'NoAnswer'
-                infos[qname] = info
-                continue
-            infos = gen_infos(data, qname, info, infos)
-    return infos
-
-
-def run_resolve(domain, data):
+def resolve_batch(subdomains: List[str],
+                  nameservers: List[str] = None,
+                  progress_callback: Callable = None) -> Dict[str, Dict]:
     """
-    调用子域解析入口函数
+    批量解析子域名
 
-    :param str domain: 待解析的主域
-    :param list data: 待解析的子域数据列表
-    :return: 解析得到的结果列表
-    :rtype: list
+    :param list subdomains: 要解析的子域名列表
+    :param list nameservers: DNS 服务器列表
+    :param callable progress_callback: 进度回调函数
+    :return: 子域名 -> 解析信息 的字典
     """
-    logger.info(f'Start resolving subdomains of {domain}')
+    results = {}
+    total = len(subdomains)
+
+    for i, subdomain in enumerate(subdomains):
+        if progress_callback:
+            progress_callback(i + 1, total)
+
+        info = resolve_domain(subdomain, nameservers)
+        if info:
+            results[subdomain] = info
+
+    return results
+
+
+def run_resolve(domain: str, data: List[Dict], config: dict = None) -> List[Dict]:
+    """
+    使用 dnspython 解析子域名（无需 massdns）
+
+    :param str domain: 主域名
+    :param list data: 子域名数据列表，包含 'subdomain' 键
+    :param dict config: 可选配置字典
+    :return: 解析后的数据列表
+    """
+    cfg = config or {}
+    nameservers = cfg.get('nameservers', resolve_config.get('dns_nameservers'))
+    progress_callback = cfg.get('progress_callback')
+
+    logger.info(f'开始解析域名 {domain} 的子域名')
     subdomains = filter_subdomain(data)
+
     if not subdomains:
+        logger.info('没有需要解析的子域名')
         return data
 
-    massdns_dir = settings.project_root / 'thirdparty' / 'massdns'
-    result_dir = settings.results_dir
-    temp_dir = result_dir / 'temp'
-    utils.check_dir(temp_dir)
-    massdns_path = utils.get_massdns_path(massdns_dir)
-    timestring = utils.get_timestring()
+    logger.info(f'正在解析 {len(subdomains)} 个子域名')
+    infos = resolve_batch(subdomains, nameservers, progress_callback)
 
-    save_name = f'collected_subdomains_{domain}_{timestring}.txt'
-    save_path = temp_dir / save_name
-    save_subdomains(save_path, subdomains)
-    del subdomains
-    gc.collect()
-
-    output_name = f'resolved_result_{domain}_{timestring}.json'
-    output_path = temp_dir / output_name
-    log_path = result_dir / 'massdns.log'
-    ns_path = utils.get_ns_path()
-
-    logger.info(f'Running massdns to resolve subdomains')
-    utils.call_massdns(massdns_path, save_path, ns_path,
-                       output_path, log_path, quiet_mode=True)
-
-    infos = deal_output(output_path)
     data = update_data(data, infos)
-    logger.info(f'Finished resolve subdomains of {domain}')
+    logger.info(f'完成域名 {domain} 的子域名解析')
     return data

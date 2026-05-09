@@ -1,32 +1,33 @@
 # -*- coding: utf-8 -*-
-"""`tldextract` accurately separates the gTLD or ccTLD (generic or country code
-top-level domain) from the registered domain and subdomains of a URL.
+"""
+TLD 提取模块
+
+准确地将 gTLD 或 ccTLD（通用顶级域名或国家代码顶级域名）从 URL 的注册域名和子域名中分离出来。
 
     >>> import tldextract
 
     >>> tldextract.extract('http://forums.news.cnn.com/')
     ExtractResult(subdomain='forums.news', domain='cnn', suffix='com')
 
-    >>> tldextract.extract('http://forums.bbc.co.uk/') # United Kingdom
+    >>> tldextract.extract('http://forums.bbc.co.uk/') # 英国
     ExtractResult(subdomain='forums', domain='bbc', suffix='co.uk')
 
-    >>> tldextract.extract('http://www.worldbank.org.kg/') # Kyrgyzstan
+    >>> tldextract.extract('http://www.worldbank.org.kg/') # 吉尔吉斯斯坦
     ExtractResult(subdomain='www', domain='worldbank', suffix='org.kg')
 
-`ExtractResult` is a namedtuple, so it's simple to access the parts you want.
+`ExtractResult` 是一个 namedtuple，可以轻松访问各个部分。
 
     >>> ext = tldextract.extract('http://forums.bbc.co.uk')
     >>> (ext.subdomain, ext.domain, ext.suffix)
     ('forums', 'bbc', 'co.uk')
-    >>> # rejoin subdomain and domain
+    >>> # 重新组合子域名和域名
     >>> '.'.join(ext[:2])
     'forums.bbc'
-    >>> # a common alias
+    >>> # 常用别名
     >>> ext.registered_domain
     'bbc.co.uk'
 
-Note subdomain and suffix are _optional_. Not all URL-like inputs have a
-subdomain or a valid suffix.
+注意子域名和后缀是可选的。并非所有类似 URL 的输入都有子域名或有效的后缀。
 
     >>> tldextract.extract('google.com')
     ExtractResult(subdomain='', domain='google', suffix='com')
@@ -37,11 +38,10 @@ subdomain or a valid suffix.
     >>> tldextract.extract('http://127.0.0.1:8080/deployed/')
     ExtractResult(subdomain='', domain='127.0.0.1', suffix='')
 
-If you want to rejoin the whole namedtuple, regardless of whether a subdomain
-or suffix were found:
+如果要重新组合整个 namedtuple，无论是否找到子域名或后缀：
 
     >>> ext = tldextract.extract('http://127.0.0.1:8080/deployed/')
-    >>> # this has unwanted dots
+    >>> # 这会有多余的点
     >>> '.'.join(ext)
     '.127.0.0.1.'
 """
@@ -65,7 +65,7 @@ SCHEME_RE = re.compile(r'^([' + scheme_chars + ']+:)?//')
 
 
 class ExtractResult(collections.namedtuple('ExtractResult', 'subdomain domain suffix')):
-    """namedtuple of a URL's subdomain, domain, and suffix."""
+    """URL 的子域名、域名和后缀的 namedtuple"""
 
     # Necessary for __dict__ member to get populated in Python 3+
     __slots__ = ()
@@ -73,7 +73,7 @@ class ExtractResult(collections.namedtuple('ExtractResult', 'subdomain domain su
     @property
     def registered_domain(self):
         """
-        Joins the domain and suffix fields with a dot, if they're both set.
+        如果域名和后缀都设置了，用点号连接起来
 
         >>> extract('http://forums.bbc.co.uk').registered_domain
         'bbc.co.uk'

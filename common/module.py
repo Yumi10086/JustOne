@@ -1,31 +1,55 @@
 """
-Module base class
+模块基类
 """
 
 import json
-import threading
 import time
+from pathlib import Path
 
 import requests
+
 from config.logging import logger
-from config import settings
 from common import utils
 from common.database import Database
 
-lock = threading.Lock()
+http_config = {
+    'timeout': 27,
+    'verify_ssl': False,
+    'proxy_enable': False,
+    'dns_nameservers': [],
+}
+
+
+def set_http_config(config: dict):
+    """设置模块全局 HTTP 配置"""
+    http_config.update(config)
 
 
 class Module(object):
-    def __init__(self):
+    """收集模块基类"""
+
+    def __init__(self, domain: str = '', config: dict = None):
+        """
+        初始化模块
+
+        :param str domain: 目标域名
+        :param dict config: 配置字典
+        """
         self.module = 'Module'
         self.source = 'BaseModule'
+        self.domain = domain
+        self.config = config or {}
+
         self.cookie = None
         self.header = dict()
         self.proxy = None
         self.delay = 1
-        self.timeout = settings.http_timeout
-        self.verify = settings.http_verify_ssl
-        self.domain = str()
+        self.timeout = self.config.get('timeout', http_config.get('timeout', 27))
+        self.verify = self.config.get('verify_ssl', http_config.get('verify_ssl', False))
+        self.proxy_enable = self.config.get('proxy_enable', http_config.get('proxy_enable', False))
+        self.results_dir = self.config.get('results_dir', Path.cwd() / 'results')
+        self.save_module_result = self.config.get('save_module_result', False)
+
         self.subdomains = set()
         self.infos = dict()
         self.results = list()
@@ -35,45 +59,37 @@ class Module(object):
 
     def have_api(self, *apis):
         """
-        Simply check whether the api information configure or not
+        检查 API 信息是否配置完整
 
-        :param  apis: apis set
-        :return bool: check result
+        :param apis: API 配置项集合
+        :return bool: 检查结果
         """
         if not all(apis):
-            logger.debug(f'{self.source} module is not configured')
+            logger.debug(f'{self.source} 模块未配置')
             return False
         return True
 
     def begin(self):
-        """
-        begin log
-        """
-        logger.debug(f'Start {self.source} module to '
-                    f'collect subdomains of {self.domain}')
+        """记录模块开始的日志"""
+        logger.debug(f'开始 {self.source} 模块收集 {self.domain} 的子域名')
 
     def finish(self):
-        """
-        finish log
-        """
+        """记录模块结束的日志"""
         self.end = time.time()
         self.elapse = round(self.end - self.start, 1)
-        logger.debug(f'Finished {self.source} module to '
-                    f'collect {self.domain}\'s subdomains')
-        logger.info(f'{self.source} module took {self.elapse} seconds '
-                    f'found {len(self.subdomains)} subdomains')
-        logger.debug(f'{self.source} module found subdomains of {self.domain}\n'
-                    f'{self.subdomains}')
+        logger.debug(f'完成 {self.source} 模块收集 {self.domain} 的子域名')
+        logger.info(f'{self.source} 模块耗时 {self.elapse} 秒，发现 {len(self.subdomains)} 个子域名')
+        logger.debug(f'{self.source} 模块发现的子域名:\n{self.subdomains}')
 
     def head(self, url, params=None, check=True, **kwargs):
         """
-        Custom head request
+        发送 HEAD 请求
 
-        :param str  url: request url
-        :param dict params: request parameters
-        :param bool check: check response
-        :param kwargs: other params
-        :return: response object
+        :param str url: 请求 URL
+        :param dict params: 请求参数
+        :param bool check: 是否检查响应
+        :param kwargs: 其他参数
+        :return: 响应对象
         """
         session = requests.Session()
         session.trust_env = False
@@ -97,15 +113,15 @@ class Module(object):
 
     def get(self, url, params=None, check=True, ignore=False, raise_error=False, **kwargs):
         """
-        Custom get request
+        发送 GET 请求
 
-        :param str  url: request url
-        :param dict params: request parameters
-        :param bool check: check response
-        :param bool ignore: ignore error
-        :param bool raise_error: raise error or not
-        :param kwargs: other params
-        :return: response object
+        :param str url: 请求 URL
+        :param dict params: 请求参数
+        :param bool check: 是否检查响应
+        :param bool ignore: 是否忽略错误
+        :param bool raise_error: 是否抛出错误
+        :param kwargs: 其他参数
+        :return: 响应对象
         """
         session = requests.Session()
         session.trust_env = False
@@ -136,13 +152,13 @@ class Module(object):
 
     def post(self, url, data=None, check=True, **kwargs):
         """
-        Custom post request
+        发送 POST 请求
 
-        :param str  url: request url
-        :param dict data: request data
-        :param bool check: check response
-        :param kwargs: other params
-        :return: response object
+        :param str url: 请求 URL
+        :param dict data: 请求数据
+        :param bool check: 是否检查响应
+        :param kwargs: 其他参数
+        :return: 响应对象
         """
         session = requests.Session()
         session.trust_env = False
@@ -166,23 +182,23 @@ class Module(object):
 
     def delete(self, url, check=True, **kwargs):
         """
-        Custom delete request
+        发送 DELETE 请求
 
-        :param str  url: request url
-        :param bool check: check response
-        :param kwargs: other params
-        :return: response object
+        :param str url: 请求 URL
+        :param bool check: 是否检查响应
+        :param kwargs: 其他参数
+        :return: 响应对象
         """
         session = requests.Session()
         session.trust_env = False
         try:
             resp = session.delete(url,
-                                  cookies=self.cookie,
-                                  headers=self.header,
-                                  proxies=self.proxy,
-                                  timeout=self.timeout,
-                                  verify=self.verify,
-                                  **kwargs)
+                                   cookies=self.cookie,
+                                   headers=self.header,
+                                   proxies=self.proxy,
+                                   timeout=self.timeout,
+                                   verify=self.verify,
+                                   **kwargs)
         except Exception as e:
             logger.error(e.args[0])
             return None
@@ -194,9 +210,9 @@ class Module(object):
 
     def get_header(self):
         """
-        Get request header
+        获取请求头
 
-        :return: header
+        :return: 请求头字典
         """
         headers = utils.gen_fake_header()
         if isinstance(headers, dict):
@@ -206,18 +222,26 @@ class Module(object):
 
     def get_proxy(self, module):
         """
-        Get proxy
+        获取代理
 
-        :param str module: module name
-        :return: proxy
+        :param str module: 模块名称
+        :return: 代理配置
         """
-        if not settings.proxy_enable:
-            logger.debug(f'All modules do not use proxy')
+        if not self.proxy_enable:
+            logger.debug('所有模块不使用代理')
             return self.proxy
-        logger.debug(f'{module} module uses proxy')
+        logger.debug(f'{module} 模块使用代理')
         return utils.get_random_proxy()
 
     def match_subdomains(self, resp, distinct=True, fuzzy=True):
+        """
+        从响应中匹配子域名
+
+        :param resp: 响应对象或字符串
+        :param bool distinct: 是否去重
+        :param bool fuzzy: 是否模糊匹配
+        :return: 子域名集合
+        """
         if not resp:
             return set()
         elif isinstance(resp, str):
@@ -228,21 +252,26 @@ class Module(object):
             return set()
 
     def collect_subdomains(self, resp):
+        """
+        收集子域名
+
+        :param resp: 响应对象或字符串
+        :return: 子域名集合
+        """
         subdomains = self.match_subdomains(resp)
         self.subdomains.update(subdomains)
         return self.subdomains
 
     def save_json(self):
         """
-        Save the results of each module as a json file
+        将模块结果保存为 JSON 文件
 
-        :return bool: whether saved successfully
+        :return bool: 是否保存成功
         """
-        if not settings.collect_save_module_result:
+        if not self.save_module_result:
             return False
-        logger.debug(f'Save the subdomain results found by '
-                    f'{self.source} module as a json file')
-        path = settings.results_dir / self.domain / self.module
+        logger.debug(f'保存 {self.source} 模块发现的子域名结果为 JSON 文件')
+        path = self.results_dir / self.domain / self.module
         path.mkdir(parents=True, exist_ok=True)
         name = self.source + '.json'
         path = path.joinpath(name)
@@ -258,12 +287,10 @@ class Module(object):
         return True
 
     def gen_result(self):
-        """
-        Generate results
-        """
-        logger.debug(f'Generating final results')
+        """生成结果列表"""
+        logger.debug('正在生成最终结果')
         if not len(self.subdomains):
-            logger.debug(f'{self.source} module result is empty')
+            logger.debug(f'{self.source} 模块结果为空')
             result = {'id': None,
                       'alive': None,
                       'request': None,
@@ -349,14 +376,14 @@ class Module(object):
                           'find': len(self.subdomains)}
                 self.results.append(result)
 
-    def save_db(self):
+    def save_db(self, db_path: str = None):
         """
-        Save module results into the database
+        将模块结果保存到数据库
+
+        :param str db_path: 数据库文件路径
         """
-        logger.debug(f'Saving results to database')
-        lock.acquire()
-        db = Database()
+        logger.debug('正在保存结果到数据库')
+        db = Database(db_path)
         db.create_table(self.domain)
-        db.save_db(self.domain, self.results, self.source)
+        db.insert_many(self.domain, self.results, self.source)
         db.close()
-        lock.release()

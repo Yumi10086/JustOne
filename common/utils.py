@@ -1,3 +1,7 @@
+"""
+工具函数模块
+"""
+
 import os
 import re
 import time
@@ -64,6 +68,17 @@ def set_http_config(
     dns_nameservers: list = None,
     dns_timeout: int = 5,
 ):
+    """
+    设置全局 HTTP 配置
+
+    :param int timeout: 超时时间（秒）
+    :param bool verify_ssl: 是否验证 SSL 证书
+    :param bool enable_random_ua: 是否启用随机 User-Agent
+    :param bool proxy_enable: 是否启用代理
+    :param list proxy_pool: 代理池列表
+    :param list dns_nameservers: DNS 服务器列表
+    :param int dns_timeout: DNS 超时时间（秒）
+    """
     http_config['timeout'] = timeout
     http_config['verify_ssl'] = verify_ssl
     http_config['enable_random_ua'] = enable_random_ua
@@ -74,6 +89,11 @@ def set_http_config(
 
 
 def gen_random_ip():
+    """
+    生成随机公网 IP 地址
+
+    :return: 随机公网 IP 字符串
+    """
     while True:
         ip = IPv4Address(random.randint(0, 2 ** 32 - 1))
         if ip.is_global:
@@ -81,6 +101,12 @@ def gen_random_ip():
 
 
 def gen_fake_header(enable_random_ua: bool = None):
+    """
+    生成伪造的 HTTP 请求头
+
+    :param bool enable_random_ua: 是否使用随机 User-Agent
+    :return: 请求头字典
+    """
     headers = default_headers.copy()
     if enable_random_ua or (enable_random_ua is None and http_config['enable_random_ua']):
         headers['User-Agent'] = random.choice(user_agents)
@@ -89,6 +115,11 @@ def gen_fake_header(enable_random_ua: bool = None):
 
 
 def get_random_header():
+    """
+    获取随机请求头
+
+    :return: 请求头字典
+    """
     headers = gen_fake_header()
     if not isinstance(headers, dict):
         headers = None
@@ -96,6 +127,11 @@ def get_random_header():
 
 
 def get_random_proxy():
+    """
+    获取随机代理
+
+    :return: 代理字典，未启用返回 None
+    """
     if not http_config['proxy_enable']:
         return None
     try:
@@ -105,18 +141,36 @@ def get_random_proxy():
 
 
 def get_proxy():
+    """
+    获取代理（根据配置）
+
+    :return: 代理字典，未启用返回 None
+    """
     if http_config['proxy_enable']:
         return get_random_proxy()
     return None
 
 
 def split_list(ls, size):
+    """
+    将列表分割为指定大小的子列表
+
+    :param list ls: 要分割的列表
+    :param int size: 每个子列表的大小
+    :return: 子列表的列表
+    """
     if size == 0:
         return ls
     return [ls[i:i + size] for i in range(0, len(ls), size)]
 
 
 def match_main_domain(domain):
+    """
+    匹配主域名
+
+    :param domain: 域名或 URL 字符串
+    :return: 匹配的主域名，未匹配返回 None
+    """
     if not isinstance(domain, str):
         return None
     item = domain.lower().strip()
@@ -124,6 +178,12 @@ def match_main_domain(domain):
 
 
 def read_target_file(target):
+    """
+    从目标文件读取域名列表
+
+    :param target: 文件路径
+    :return: 域名列表
+    """
     domains = list()
     with open(target, encoding='utf-8', errors='ignore') as file:
         for line in file:
@@ -136,10 +196,16 @@ def read_target_file(target):
 
 
 def get_from_target(target):
+    """
+    从单个目标获取域名
+
+    :param target: 目标字符串（域名或 URL）
+    :return: 域名集合
+    """
     domains = set()
     if isinstance(target, str):
         if target.endswith('.txt'):
-            raise ValueError('Use targets parameter for multiple domain names')
+            raise ValueError('使用 targets 参数处理多个域名')
         domain = match_main_domain(target)
         if not domain:
             return domains
@@ -148,6 +214,12 @@ def get_from_target(target):
 
 
 def get_from_targets(targets):
+    """
+    从目标文件获取域名列表
+
+    :param targets: 目标文件路径
+    :return: 域名集合
+    """
     domains = set()
     if not isinstance(targets, str):
         return domains
@@ -159,17 +231,29 @@ def get_from_targets(targets):
 
 
 def get_domains(target, targets=None):
+    """
+    获取域名列表
+
+    :param target: 目标域名或文件
+    :param targets: 目标文件路径
+    :return: 域名列表
+    """
     target_domains = get_from_target(target)
     targets_domains = get_from_targets(targets)
     domains = list(target_domains.union(targets_domains))
     if targets_domains:
         domains = sorted(domains, key=targets_domains.index)
     if not domains:
-        raise ValueError('Did not get a valid domain name')
+        raise ValueError('未获取到有效的域名')
     return domains
 
 
 def check_dir(dir_path):
+    """
+    检查并创建目录
+
+    :param dir_path: 目录路径
+    """
     if not dir_path.exists():
         dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -351,20 +435,44 @@ async def check_net_async(timeout: int = None, verify: bool = None):
 
 
 def check_net(timeout: int = None, verify: bool = None):
+    """
+    检查网络连接（同步版本）
+
+    :param int timeout: 超时时间
+    :param bool verify: 是否验证 SSL
+    :return: (是否联网, 是否在中国)
+    """
     return asyncio.run(check_net_async(timeout, verify))
 
 
 def get_net_env():
+    """
+    获取网络环境信息
+
+    :return: (是否联网, 是否在中国)
+    """
     return check_net()
 
 
 def get_main_domain(domain):
+    """
+    获取主域名
+
+    :param domain: 域名字符串
+    :return: 注册域名
+    """
     if not isinstance(domain, str):
         return None
     return Domain(domain).registered()
 
 
 def is_subname(name):
+    """
+    判断是否为有效的子域名格式
+
+    :param name: 域名或子域名
+    :return: 是否有效
+    """
     chars = string.ascii_lowercase + string.digits + '.-'
     for char in name:
         if char not in chars:
@@ -373,6 +481,12 @@ def is_subname(name):
 
 
 def ip_to_int(ip):
+    """
+    将 IP 地址转换为整数
+
+    :param ip: IP 地址字符串或整数
+    :return: 整数形式的 IP
+    """
     if isinstance(ip, int):
         return ip
     try:
@@ -383,6 +497,15 @@ def ip_to_int(ip):
 
 
 def match_subdomains(domain, html, distinct=True, fuzzy=True):
+    """
+    从 HTML 响应中匹配子域名
+
+    :param domain: 主域名
+    :param html: HTML 响应文本
+    :param bool distinct: 是否去重
+    :param bool fuzzy: 是否模糊匹配
+    :return: 子域名集合或列表
+    """
     if fuzzy:
         regexp = r'(?:[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?\.){0,}' \
                  + domain.replace('.', r'\.')

@@ -1,18 +1,25 @@
 """
-" ip2region python searcher client module
-"
-" Author: koma<komazhang@foxmail.com>
-" Date : 2015-11-06
+IP2Region Python 搜索客户端模块
 """
+
 import io
-import sys
 import socket
 import struct
+from pathlib import Path
 
-from config import settings
+ipreg_config = {
+    'data_dir': Path(__file__).parent.parent / 'data',
+}
+
+
+def set_ipreg_config(config: dict):
+    """设置全局 IP 注册配置"""
+    ipreg_config.update(config)
 
 
 class IpRegInfo(object):
+    """IP2Region 搜索器基类"""
+
     __INDEX_BLOCK_LENGTH = 12
     __TOTAL_HEADER_LENGTH = 8192
 
@@ -26,18 +33,25 @@ class IpRegInfo(object):
     __dbBinStr = ''
 
     def __init__(self, db_file):
+        """
+        初始化搜索器
+
+        :param str db_file: IP 数据库文件路径
+        """
         self.init_database(db_file)
 
     def memory_search(self, ip):
         """
-        " memory search method
-        " param: ip
+        内存搜索方法
+
+        :param ip: IP 地址或整数
+        :return: IP 信息字典
         """
         if not ip.isdigit():
             ip = self.ip2long(ip)
 
         if self.__dbBinStr == '':
-            self.__dbBinStr = self.__f.read()  # read all the contents in file
+            self.__dbBinStr = self.__f.read()
             self.__indexSPtr = self.get_long(self.__dbBinStr, 0)
             self.__indexLPtr = self.get_long(self.__dbBinStr, 4)
             self.__indexCount = int((self.__indexLPtr - self.__indexSPtr) /
@@ -60,25 +74,29 @@ class IpRegInfo(object):
                     break
 
         if data_ptr == 0:
-            raise Exception("Data pointer not found")
+            raise Exception("未找到数据指针")
 
         return self.return_data(data_ptr)
 
     def init_database(self, db_file):
         """
-        " initialize the database for search
-        " param: dbFile
+        初始化搜索数据库
+
+        :param str db_file: 数据库文件路径
         """
         try:
             self.__f = io.open(db_file, "rb")
         except IOError as e:
-            print("[Error]: %s" % e)
-            sys.exit()
+            from config.logging import logger
+            logger.error(f'打开 IP 数据库失败: {e}')
+            raise
 
     def return_data(self, data_ptr):
         """
-        " get ip data from db file by data start ptr
-        " param: data ptr
+        根据数据指针从数据库文件获取 IP 数据
+
+        :param data_ptr: 数据指针
+        :return: IP 信息字典
         """
         data_len = (data_ptr >> 24) & 0xFF
         data_ptr = data_ptr & 0x00FFFFFF
@@ -92,11 +110,23 @@ class IpRegInfo(object):
 
     @staticmethod
     def ip2long(ip):
+        """
+        将 IP 地址转换为整数
+
+        :param ip: IP 地址字符串
+        :return: 整数形式的 IP
+        """
         _ip = socket.inet_aton(ip)
         return struct.unpack("!L", _ip)[0]
 
     @staticmethod
     def is_ip(ip):
+        """
+        判断字符串是否为有效的 IP 地址
+
+        :param ip: 待检查的字符串
+        :return: 是否为有效 IP
+        """
         p = ip.split(".")
         if len(p) != 4:
             return False
@@ -111,11 +141,19 @@ class IpRegInfo(object):
 
     @staticmethod
     def get_long(b, offset):
+        """
+        从字节数组中提取长整数
+
+        :param b: 字节数组
+        :param offset: 偏移量
+        :return: 长整数
+        """
         if len(b[offset:offset + 4]) == 4:
             return struct.unpack('I', b[offset:offset + 4])[0]
         return 0
 
     def close(self):
+        """关闭数据库文件"""
         if self.__f is not None:
             self.__f.close()
         self.__dbBinStr = None
@@ -124,11 +162,26 @@ class IpRegInfo(object):
 
 
 class IpRegData(IpRegInfo):
-    def __init__(self):
-        path = settings.data_dir / 'ip2region.db'
+    """IP 注册数据查询类"""
+
+    def __init__(self, config: dict = None):
+        """
+        初始化 IP 注册数据查询
+
+        :param dict config: 可选配置字典
+        """
+        cfg = config or {}
+        data_dir = cfg.get('data_dir', ipreg_config.get('data_dir'))
+        path = data_dir / 'ip2region.db'
         IpRegInfo.__init__(self, path)
 
     def query(self, ip):
+        """
+        查询 IP 对应的地理位置
+
+        :param ip: IP 地址
+        :return: 包含地址和 ISP 的字典
+        """
         result = self.memory_search(ip)
         addr_list = result.get('region').split('|')
         addr = ''.join(filter(lambda x: x != '0', addr_list[:-1]))
