@@ -2,8 +2,7 @@
 SQLite database initialization and operation
 """
 
-from common import records
-from common.records import Connection
+import sqlite3
 from config.logging import logger
 from config import settings
 
@@ -11,6 +10,7 @@ from config import settings
 class Database(object):
     def __init__(self, db_path=None):
         self.conn = self.get_conn(db_path)
+        self.conn.row_factory = sqlite3.Row
 
     @staticmethod
     def get_conn(db_path):
@@ -21,24 +21,66 @@ class Database(object):
         :return: db_conn: SQLite database connection
         """
         logger.log('TRACE', f'Establishing database connection')
-        if isinstance(db_path, Connection):
-            return db_path
-        protocol = 'sqlite:///'
-        if not db_path:  # 数据库路径为空连接默认数据库
-            db_path = f'{protocol}{settings.result_save_dir}/result.sqlite3'
-        else:
-            db_path = f'{protocol}{db_path}'
-        db = records.Database(db_path)  # 不存在数据库时会新建一个数据库
+        if db_path is None:
+            db_path = f'{settings.result_save_dir}/result.sqlite3'
         logger.log('TRACE', f'Use the database: {db_path}')
-        return db.get_connection()
+        conn = sqlite3.connect(db_path)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('PRAGMA synchronous=NORMAL')
+        conn.execute('PRAGMA temp_store=MEMORY')
+        return conn
 
-    def query(self, sql):
+    def query(self, sql, params=None):
+        """
+        Execute a query and return results
+
+        :param str sql: SQL query
+        :param tuple params: Query parameters
+        :return: QueryResult with data and success status
+        """
+        class QueryResult:
+            def __init__(self, data=None, success=True, error=None):
+                self.data = data
+                self.success = success
+                self.error = error
+
+            def __iter__(self):
+                if self.data:
+                    return iter(self.data)
+                return iter([])
+
+            def __len__(self):
+                return len(self.data) if self.data else 0
+
+            def scalar(self):
+                if self.data and len(self.data) > 0:
+                    return self.data[0][0] if len(self.data[0]) > 0 else None
+                return None
+
         try:
-            results = self.conn.query(sql)
+            cursor = self.conn.cursor()
+            try:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                if sql.strip().upper().startswith('SELECT'):
+                    results = cursor.fetchall()
+                    return QueryResult(data=results)
+                else:
+                    self.conn.commit()
+                    return QueryResult(data=cursor.rowcount, success=True)
+            finally:
+                cursor.close()
+        except sqlite3.OperationalError as e:
+            logger.log('ERROR', f'Database operational error: {e}')
+            return QueryResult(success=False, error=str(e))
+        except sqlite3.IntegrityError as e:
+            logger.log('ERROR', f'Database integrity error: {e}')
+            return QueryResult(success=False, error=str(e))
         except Exception as e:
-            logger.log('ERROR', e.args)
-            return None
-        return results
+            logger.log('ERROR', f'Unexpected error: {e}')
+            return QueryResult(success=False, error=str(e))
 
     def create_table(self, table_name):
         """
@@ -85,46 +127,56 @@ class Database(object):
                    f'elapse float,'
                    f'find int)')
 
-    def insert_table(self, table_name, result):
-        table_name = table_name.replace('.', '_')
-        self.conn.query(
-            f'insert into "{table_name}" '
-            f'(id, alive, resolve, request, url, subdomain, port, level,'
-            f'cname, ip, public, cdn, status, reason, title, banner, header,'
-            f'history, response, ip_times, cname_times, ttl, cidr, asn, org,'
-            f'addr, isp, resolver, module, source, elapse, find) '
-            f'values (:id, :alive, :resolve, :request, :url,'
-            f':subdomain, :port, :level, :cname, :ip, :public, :cdn,'
-            f':status, :reason, :title, :banner, :header, :history, :response,'
-            f':ip_times, :cname_times, :ttl, :cidr, :asn, :org, :addr, :isp,'
-            f':resolver, :module, :source, :elapse, :find)', **result)
-
-    def save_db(self, table_name, results, module_name=None):
+    def insert(self, table_name, result):
         """
-        Save the results of each module in the database
+        Insert a single record into the table
 
         :param str table_name: table name
-        :param list results: results list
-        :param str module_name: module
+        :param dict result: record to insert
         """
-        logger.log('TRACE', f'Saving the subdomain results of {table_name} '
-                            f'found by module {module_name} into database')
-        table_name = table_name.replace('.', '_')
-        if results:
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        keys = result.keys()
+        fields = ', '.join(keys)
+        placeholders = ', '.join(['?' for _ in keys])
+        sql = f'insert into "{safe_table_name}" ({fields}) values ({placeholders})'
+        return self.query(sql, tuple(result.values()))
+
+    def insert_many(self, table_name, results, module_name=None):
+        """
+        Insert multiple records into the table
+
+        :param str table_name: table name
+        :param list results: list of records to insert
+        :param str module_name: module name for logging
+        """
+        if module_name:
+            logger.log('TRACE', f'Saving {len(results)} subdomain results of {table_name} '
+                                f'found by module {module_name} to database')
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        if not results:
+            return
+        try:
+            cursor = self.conn.cursor()
             try:
-                self.conn.bulk_query(
-                    f'insert into "{table_name}" '
-                    f'(id, alive, resolve, request, url, subdomain, port, level, '
-                    f'cname, ip, public, cdn, status, reason, title, banner, header, '
-                    f'history, response, ip_times, cname_times, ttl, cidr, asn, org, '
-                    f'addr, isp, resolver, module, source, elapse, find) '
-                    f'values (:id, :alive, :resolve, :request, :url, '
-                    f':subdomain, :port, :level, :cname, :ip, :public, :cdn,'
-                    f':status, :reason, :title, :banner, :header, :history, :response, '
-                    f':ip_times, :cname_times, :ttl, :cidr, :asn, :org, :addr, :isp, '
-                    f':resolver, :module, :source, :elapse, :find)', results)
-            except Exception as e:
-                logger.log('ERROR', e)
+                keys = results[0].keys()
+                fields = ', '.join(keys)
+                placeholders = ', '.join(['?' for _ in keys])
+                sql = f'insert into "{safe_table_name}" ({fields}) values ({placeholders})'
+                for result in results:
+                    cursor.execute(sql, tuple(result.values()))
+                self.conn.commit()
+            finally:
+                cursor.close()
+        except Exception as e:
+            logger.log('ERROR', e)
+
+    def save_db(self, table_name, results, module_name=None):
+        """Alias for insert_many for backward compatibility"""
+        return self.insert_many(table_name, results, module_name)
+
+    def insert_table(self, table_name, result):
+        """Alias for insert for backward compatibility"""
+        return self.insert(table_name, result)
 
     def exist_table(self, table_name):
         """
@@ -133,11 +185,11 @@ class Database(object):
         :param   str table_name: table name
         :return  bool: Whether table exists
         """
-        table_name = table_name.replace('.', '_')
-        logger.log('TRACE', f'Determining whether the {table_name} table exists')
-        results = self.query(f'select count() from sqlite_master where type = "table" and'
-                             f' name = "{table_name}"')
-        if results.scalar() == 0:
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        logger.log('TRACE', f'Determining whether the {safe_table_name} table exists')
+        sql = 'select count() from sqlite_master where type = "table" and name = ?'
+        result = self.query(sql, (safe_table_name,))
+        if result.success and result.data and result.data[0][0] == 0:
             return False
         else:
             return True
@@ -191,15 +243,15 @@ class Database(object):
 
     def deduplicate_subdomain(self, table_name):
         """
-        Deduplicate subdomains in the table
+        Deduplicate subdomains in the table using rowid for better performance
 
         :param str table_name: table name
         """
-        table_name = table_name.replace('.', '_')
-        logger.log('TRACE', f'Deduplicating subdomains in {table_name} table')
-        self.query(f'delete from "{table_name}" where '
-                   f'id not in (select min(id) '
-                   f'from "{table_name}" group by subdomain)')
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        logger.log('TRACE', f'Deduplicating subdomains in {safe_table_name} table')
+        self.query(f'delete from "{safe_table_name}" where '
+                   f'rowid not in (select min(rowid) '
+                   f'from "{safe_table_name}" group by subdomain)')
 
     def remove_invalid(self, table_name):
         """
@@ -210,17 +262,18 @@ class Database(object):
         table_name = table_name.replace('.', '_')
         logger.log('TRACE', f'Removing invalid subdomains in {table_name} table')
         self.query(f'delete from "{table_name}" where '
-                   f'subdomain is null or resolve == 0')
+                   f'subdomain is null or resolve = 0')
 
     def get_data(self, table_name):
         """
         Get all the data in the table
 
         :param str table_name: table name
+        :return: QueryResult with all rows
         """
-        table_name = table_name.replace('.', '_')
-        logger.log('TRACE', f'Get all the data from {table_name} table')
-        return self.query(f'select * from "{table_name}"')
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        logger.log('TRACE', f'Get all the data from {safe_table_name} table')
+        return self.query(f'select * from "{safe_table_name}"')
 
     def export_data(self, table_name, alive, limit):
         """
@@ -228,49 +281,58 @@ class Database(object):
 
         :param str table_name: table name
         :param any alive: alive flag
-        :param str limit: limit value
+        :param str limit: limit value (only 'resolve' or 'request' allowed)
         """
-        table_name = table_name.replace('.', '_')
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
         sql = f'select id, alive, request, resolve, url, subdomain, level,' \
               f'cname, ip, public, cdn, port, status, reason, title, banner,' \
-              f'cidr, asn, org, addr, isp, source from "{table_name}" '
+              f'cidr, asn, org, addr, isp, source from "{safe_table_name}" '
+        params = None
         if alive and limit:
-            if limit in ['resolve', 'request']:
-                where = f' where {limit} = 1'
-                sql += where
+            if limit in ('resolve', 'request'):
+                sql += f' where {limit} = 1'
         elif alive:
-            where = f' where alive = 1'
-            sql += where
+            sql += ' where alive = 1'
         sql += ' order by subdomain'
-        logger.log('TRACE', f'Get the data from {table_name} table')
-        return self.query(sql)
+        logger.log('TRACE', f'Get the data from {safe_table_name} table')
+        return self.query(sql, params)
 
     def count_alive(self, table_name):
-        table_name = table_name.replace('.', '_')
-        sql = f'select count() from "{table_name}" where alive = 1'
-        return self.query(sql)
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        sql = f'select count() from "{safe_table_name}" where alive = 1'
+        result = self.query(sql)
+        if result.success:
+            return result.scalar() or 0
+        return 0
 
     def get_resp_by_url(self, table_name, url):
-        table_name = table_name.replace('.', '_')
-        sql = f'select response from "{table_name}" where url = "{url}"'
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        sql = f'select response from "{safe_table_name}" where url = ?'
         logger.log('TRACE', f'Get response data from {url}')
-        return self.query(sql).scalar()
+        result = self.query(sql, (url,))
+        if result.success and result.data:
+            return result.data[0][0]
+        return None
 
     def get_data_by_fields(self, table_name, fields):
-        table_name = table_name.replace('.', '_')
-        field_str = ', '.join(fields)
-        sql = f'select {field_str} from "{table_name}"'
-        logger.log('TRACE', f'Get specified field data {fields} from {table_name} table')
+        safe_table_name = table_name.replace('.', '_').replace('"', '')
+        safe_fields = [f.replace('"', '') for f in fields]
+        field_str = ', '.join(safe_fields)
+        sql = f'select {field_str} from "{safe_table_name}"'
+        logger.log('TRACE', f'Get specified field data {safe_fields} from {safe_table_name} table')
         return self.query(sql)
 
     def update_data_by_url(self, table_name, info, url):
         table_name = table_name.replace('.', '_')
-        field_str = ', '.join(map(lambda kv: f'{kv[0]} = "{kv[1]}"', info.items()))
-        sql = f'update "{table_name}" set {field_str} where url = "{url}"'
-        return self.query(sql)
+        set_parts = [f'{k} = ?' for k in info.keys()]
+        set_str = ', '.join(set_parts)
+        sql = f'update "{table_name}" set {set_str} where url = ?'
+        params = tuple(info.values()) + (url,)
+        return self.query(sql, params)
 
     def close(self):
         """
         Close the database connection
         """
-        self.conn.close()
+        if self.conn:
+            self.conn.close()
