@@ -600,6 +600,12 @@ def dns_query(qname, qtype, nameservers: list = None, timeout: int = None):
     return answer
 
 
+def get_logger():
+    """获取日志记录器"""
+    from config.logging import logger
+    return logger
+
+
 def get_ns_path(data_dir, in_china=None, enable_wildcard=None, ns_ip_list=None):
     path = data_dir / 'nameservers.txt'
     if in_china:
