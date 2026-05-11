@@ -56,7 +56,7 @@ def _export_csv(results: List[Dict[str, Any]], output: Path) -> bool:
             writer = csv.DictWriter(f, fieldnames=headers)
             writer.writeheader()
             writer.writerows(results)
-        logger.info(f'结果已导出到 CSV 文件: {output}')
+        logger.info(f'结果已导出到文件: {output}')
         return True
     except Exception as e:
         logger.error(f'CSV 导出失败: {e}')
@@ -74,7 +74,7 @@ def _export_json(results: List[Dict[str, Any]], output: Path) -> bool:
     try:
         with open(output, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
-        logger.info(f'结果已导出到 JSON 文件: {output}')
+        logger.info(f'结果已导出到文件: {output}')
         return True
     except Exception as e:
         logger.error(f'JSON 导出失败: {e}')
@@ -100,7 +100,7 @@ def export_subdomains(subdomains: List[str], output: Path, format: str = 'txt'):
         try:
             with open(output, 'w', encoding='utf-8') as f:
                 json.dump(subdomains, f, ensure_ascii=False, indent=2)
-            logger.info(f'子域名列表已导出到 JSON 文件: {output}')
+            logger.info(f'结果已导出到文件: {output}')
             return True
         except Exception as e:
             logger.error(f'JSON 导出失败: {e}')
@@ -110,7 +110,7 @@ def export_subdomains(subdomains: List[str], output: Path, format: str = 'txt'):
             with open(output, 'w', encoding='utf-8') as f:
                 for subdomain in subdomains:
                     f.write(subdomain + '\n')
-            logger.info(f'子域名列表已导出到文本文件: {output}')
+            logger.info(f'结果已导出到文件: {output}')
             return True
         except Exception as e:
             logger.error(f'文本导出失败: {e}')

@@ -2,6 +2,6 @@
 证书查询模块
 """
 
-from .crtsh import Crtsh
+from .crtsh import Crtsh, run as crtsh_run
 
-__all__ = ['Crtsh']
+__all__ = ['Crtsh', 'crtsh_run']

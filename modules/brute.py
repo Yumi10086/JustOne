@@ -3,8 +3,12 @@
 """
 
 import time
+import asyncio
 from pathlib import Path
 from typing import Optional, Set, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from tqdm import tqdm
 
 from config.logging import logger
 from common import resolve
@@ -61,8 +65,6 @@ class Brute:
         self.start_time = time.time()
         self.end_time = None
         self.elapse = None
-
-        self._wildcard_ips: Set[str] = set()
 
     def load_wordlist(self) -> bool:
         """
@@ -121,45 +123,99 @@ class Brute:
         :param List[str] wordlist: 字典列表，默认使用内置字典
         :return: 候选子域名列表
         """
-        words = wordlist or self.wordlist_lines
+        if wordlist is not None and len(wordlist) > 0:
+            words = wordlist
+        else:
+            words = self.wordlist_lines
+
+        seen = set()
         candidates = []
 
         for word in words:
             if not word:
                 continue
             candidate = f'{word}.{self.domain}'
-            candidates.append(candidate)
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
 
         logger.debug(f'生成 {len(candidates)} 个候选子域名')
         return candidates
 
-    def resolve_batch(self, candidates: List[str]) -> Set[str]:
+    def resolve_batch(self, candidates: List[str], show_progress: bool = True) -> Set[str]:
         """
         批量解析候选子域名
 
         :param List[str] candidates: 候选子域名列表
+        :param bool show_progress: 是否显示进度条
         :return: 有效子域名集合
         """
         results = set()
+        total = len(candidates)
+        if total == 0:
+            return results
 
-        for candidate in candidates:
+        def resolve_one(candidate: str) -> Optional[str]:
             try:
                 info = resolve.resolve_domain(candidate)
                 if info and info.get('ip'):
                     if self.wildcard_deal and self._wildcard_ips:
                         if info['ip'] in self._wildcard_ips:
-                            continue
-                    results.add(candidate)
+                            return None
+                    return candidate
             except Exception:
                 pass
+            return None
+
+        pbar = None
+        last_update_percent = -1
+
+        if show_progress:
+            pbar = tqdm(
+                total=total,
+                desc='爆破进度',
+                ncols=60,
+                mininterval=0.5,
+                position=0,
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
+            )
+
+        if self.concurrent > 1 and total > 1:
+            with ThreadPoolExecutor(max_workers=min(self.concurrent, total)) as executor:
+                futures = {executor.submit(resolve_one, cand): cand for cand in candidates}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        results.add(result)
+                    if show_progress and pbar:
+                        pbar.update(1)
+                        current_percent = int(pbar.n * 100 / total)
+                        if current_percent - last_update_percent >= 5:
+                            pbar.refresh()
+                            last_update_percent = current_percent
+        else:
+            for candidate in candidates:
+                result = resolve_one(candidate)
+                if result:
+                    results.add(result)
+                if show_progress and pbar:
+                    pbar.update(1)
+                    current_percent = int(pbar.n * 100 / total)
+                    if current_percent - last_update_percent >= 5:
+                        pbar.refresh()
+                        last_update_percent = current_percent
+
+        if show_progress and pbar:
+            pbar.close()
 
         return results
 
-    def run(self, wordlist: Optional[List[str]] = None) -> Set[str]:
+    def run(self, wordlist: Optional[List[str]] = None, show_progress: bool = True) -> Set[str]:
         """
         执行爆破
 
         :param List[str] wordlist: 可选的字典列表
+        :param bool show_progress: 是否显示进度条
         :return: 发现的子域名集合
         """
         logger.info(f'开始爆破子域名: {self.domain}')
@@ -171,16 +227,67 @@ class Brute:
         if self.check_wildcard():
             logger.info(f'检测到泛解析，将跳过相同 IP 的结果')
 
-        candidates = self.generate_candidates(wordlist)
-        logger.info(f'开始解析 {len(candidates)} 个候选子域名')
-
-        self.subdomains = self.resolve_batch(candidates)
+        self.subdomains = self._run_recursive(wordlist, 1, show_progress)
 
         self.end_time = time.time()
         self.elapse = round(self.end_time - self.start_time, 1)
         logger.info(f'爆破完成，发现 {len(self.subdomains)} 个子域名，耗时 {self.elapse} 秒')
 
         return self.subdomains
+
+    def _run_recursive(self, wordlist: Optional[List[str]], depth: int, show_progress: bool) -> Set[str]:
+        """
+        递归执行爆破
+
+        :param List[str] wordlist: 字典列表
+        :param int depth: 当前递归深度
+        :param bool show_progress: 是否显示进度条
+        :return: 发现的子域名集合
+        """
+        results = set()
+
+        if wordlist is not None and len(wordlist) > 0:
+            words = wordlist
+        else:
+            words = self.wordlist_lines
+
+        candidates = self.generate_candidates(words)
+        logger.info(f'第 {depth} 层: 开始解析 {len(candidates)} 个候选子域名')
+
+        batch_results = self.resolve_batch(candidates, show_progress)
+        results.update(batch_results)
+
+        if self.recursive and depth < self.recursive_depth:
+            logger.info(f'第 {depth} 层: 发现 {len(batch_results)} 个子域名，继续递归...')
+            for subdomain in batch_results:
+                try:
+                    subdomain_obj = Domain(subdomain)
+                    base_domain = subdomain_obj.registered()
+                    if base_domain != self.domain:
+                        logger.debug(f'跳过跨域: {subdomain} -> {base_domain}')
+                        continue
+
+                    subdomain_prefix = subdomain.replace(f'.{self.domain}', '')
+                    new_depth = depth + 1
+                    logger.info(f'递归爆破: {subdomain} (第 {new_depth} 层)')
+                    sub_brute = Brute(
+                        self.domain,
+                        {
+                            'concurrent': self.concurrent,
+                            'recursive': True,
+                            'recursive_depth': self.recursive_depth,
+                            'wildcard_check': False,
+                            'wildcard_deal': False,
+                        }
+                    )
+                    sub_results = sub_brute._run_recursive(
+                        [subdomain_prefix], new_depth, show_progress
+                    )
+                    results.update(sub_results)
+                except Exception as e:
+                    logger.debug(f'递归爆破 {subdomain} 失败: {e}')
+
+        return results
 
     def get_elapse(self) -> Optional[float]:
         """

@@ -54,8 +54,13 @@ class DNSCheck(Module):
         :param Set[str] subdomains: 要检查的子域名集合
         :return: 可解析的子域名列表
         """
-        self.begin()
         target_subdomains = subdomains or self.subdomains
+
+        if not target_subdomains:
+            return []
+
+        self.subdomains = target_subdomains
+        self.begin()
 
         resolved_list = []
         for subdomain in target_subdomains:
@@ -64,5 +69,6 @@ class DNSCheck(Module):
                 resolved_list.append(result)
                 self.infos[subdomain] = result
 
+        self.subdomains = set(r['subdomain'] for r in resolved_list)
         self.finish()
         return resolved_list

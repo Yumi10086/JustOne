@@ -15,6 +15,8 @@ from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from dns.resolver import Resolver
 
 from common.domain import Domain

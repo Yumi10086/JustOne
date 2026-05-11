@@ -7,13 +7,15 @@ import time
 from pathlib import Path
 
 import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from config.logging import logger
 from common import utils
 from common.database import Database
 
 http_config = {
-    'timeout': 27,
+    'timeout': 5,
     'verify_ssl': False,
     'proxy_enable': False,
     'dns_nameservers': [],
@@ -77,22 +79,26 @@ class Module(object):
         """记录模块结束的日志"""
         self.end = time.time()
         self.elapse = round(self.end - self.start, 1)
-        logger.debug(f'完成 {self.source} 模块收集 {self.domain} 的子域名')
+        logger.debug(f'{self.source} 模块执行结束')
         logger.info(f'{self.source} 模块耗时 {self.elapse} 秒，发现 {len(self.subdomains)} 个子域名')
-        logger.debug(f'{self.source} 模块发现的子域名:\n{self.subdomains}')
+        logger.debug(f'{self.source} 模块发现的子域名: {self.subdomains}')
 
-    def head(self, url, params=None, check=True, **kwargs):
+    def head(self, url, params=None, check=True, ignore=False, **kwargs):
         """
         发送 HEAD 请求
 
         :param str url: 请求 URL
         :param dict params: 请求参数
         :param bool check: 是否检查响应
+        :param bool ignore: 是否忽略错误（降低日志级别）
         :param kwargs: 其他参数
         :return: 响应对象
         """
         session = requests.Session()
         session.trust_env = False
+        level = 'ERROR'
+        if ignore:
+            level = 'DEBUG'
         try:
             resp = session.head(url,
                                 params=params,
@@ -103,7 +109,7 @@ class Module(object):
                                 verify=self.verify,
                                 **kwargs)
         except Exception as e:
-            logger.error(e.args[0])
+            logger.log(level, e.args[0])
             return None
         if not check:
             return resp
