@@ -52,6 +52,9 @@ class Collect:
         self.domain_obj = Domain(domain)
         self.registered_domain = self.domain_obj.registered()
 
+        if not self.registered_domain:
+            raise ValueError(f'无法解析目标域名: {domain}，请检查域名格式')
+
         self.subdomains: Set[str] = set()
         self.results: List[Dict[str, Any]] = list()
         self.modules_results: Dict[str, Set[str]] = {}
@@ -231,9 +234,9 @@ class Collect:
         """
         获取最终结果
 
-        :return: 结果列表
+        :return: 结果字典列表
         """
-        return self.results
+        return [{'subdomain': s, 'module': 'unknown'} for s in sorted(self.subdomains)]
 
     def get_module_results(self) -> Dict[str, Set[str]]:
         """

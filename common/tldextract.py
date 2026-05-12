@@ -56,8 +56,7 @@ from urllib.parse import scheme_chars
 from functools import wraps
 
 import idna
-
-from common import utils
+import socket
 
 IP_RE = re.compile(r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$')  # pylint: disable=line-too-long
 
@@ -154,7 +153,7 @@ class TLDExtract(object):
         suffix_index = self._get_tld_extractor().suffix_index(translations)
 
         suffix = ".".join(labels[suffix_index:])
-        if not suffix and netloc and utils.looks_like_ip(netloc):
+        if not suffix and netloc and _looks_like_ip(netloc):
             return ExtractResult('', netloc, '')
 
         subdomain = ".".join(labels[:suffix_index - 1]) if suffix_index else ""
@@ -231,6 +230,21 @@ class _PublicSuffixListTLDExtractor(object):
                 return i
 
         return length
+
+
+def _looks_like_ip(maybe_ip):
+    """判断是否为 IP 地址"""
+    if not maybe_ip[0].isdigit():
+        return False
+    try:
+        socket.inet_aton(maybe_ip)
+        return True
+    except (AttributeError, UnicodeError):
+        if IP_RE.match(maybe_ip):
+            return True
+    except socket.error:
+        return False
+    return False
 
 
 def _decode_punycode(label):

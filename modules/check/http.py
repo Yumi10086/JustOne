@@ -14,6 +14,7 @@ logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 
 from common.module import Module
 from common import utils
+from config.logging import logger
 
 
 ALIVE_CODES = {
@@ -57,7 +58,8 @@ class AsyncHTTPCheck:
                         'status': resp.status,
                         'alive': True,
                     }
-        except Exception:
+        except Exception as e:
+            logger.debug(f'HEAD 检查 {subdomain} 异常: {e}')
             pass
         try:
             async with session.get(url, allow_redirects=False) as resp:
@@ -68,7 +70,8 @@ class AsyncHTTPCheck:
                         'status': resp.status,
                         'alive': True,
                     }
-        except Exception:
+        except Exception as e:
+            logger.debug(f'GET 检查 {subdomain} 异常: {e}')
             pass
         return None
 
@@ -182,7 +185,8 @@ class HTTPCheck(Module):
                         'status': status,
                         'alive': True,
                     }
-        except Exception:
+        except Exception as e:
+            logger.debug(f'HTTP 检查 {subdomain} 异常: {e}')
             pass
         return None
 

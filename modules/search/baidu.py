@@ -6,7 +6,7 @@ import time
 from typing import Optional, Set
 
 from common.module import Module
-from common import utils
+from config.logging import logger
 
 
 class BaiduSearch(Module):
@@ -34,7 +34,7 @@ class BaiduSearch(Module):
         :return: 发现的子域名集合
         """
         self.begin()
-        logger = utils.get_logger()
+        self.get_header()
 
         query = f'site:{self.domain}'
         page_count = 5
@@ -77,7 +77,4 @@ def run(domain: str, config: Optional[dict] = None) -> Set[str]:
     :return: 发现的子域名集合
     """
     module = BaiduSearch(domain, config)
-    module.begin()
-    subdomains = module.run()
-    module.finish()
-    return subdomains
+    return module.run()

@@ -44,9 +44,9 @@ from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from config.logging import init_logging
+from config.settings import settings
 from modules.collect import Collect
 from modules.brute import Brute
 from modules.export import export_subdomains, export_results
@@ -127,33 +127,40 @@ def main(
         'enable_certificate': not disable_cert,
         'enable_dataset': not disable_dataset,
         'save_module_result': False,
+        'LEAKIX_API': settings.leakix_api,
     }
 
     subdomains = set()
     total_elapse = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        task1 = progress.add_task("[cyan]执行信息收集模块...", total=None)
+    import sys
 
-        if not (disable_search and disable_cert and disable_dataset):
-            collect = Collect(main_domain, config)
-            subdomains = set(collect.run())
-            total_elapse += collect.elapse or 0
-            progress.update(task1, completed=100)
+    def show_progress(description: str, start_time: float):
+        """单行进度显示"""
+        elapsed = time.time() - start_time
+        sys.stdout.write(f'\r  {description} [{elapsed:.1f}s]')
+        sys.stdout.flush()
 
-        if brute:
-            task2 = progress.add_task("[cyan]执行爆破模块...", total=None)
-            brute_module = Brute(main_domain)
-            brute_subdomains = brute_module.run()
-            subdomains.update(brute_subdomains)
-            total_elapse += brute_module.get_elapse() or 0
-            progress.update(task2, completed=100)
+    if not (disable_search and disable_cert and disable_dataset):
+        start = time.time()
+        sys.stdout.write('  执行信息收集模块... ')
+        sys.stdout.flush()
+        collect = Collect(main_domain, config)
+        subdomains = set(collect.run())
+        total_elapse += collect.elapse or 0
+        show_progress('完成', start)
+        print()
+
+    if brute:
+        start = time.time()
+        sys.stdout.write('  执行爆破模块... ')
+        sys.stdout.flush()
+        brute_module = Brute(main_domain)
+        brute_subdomains = brute_module.run()
+        subdomains.update(brute_subdomains)
+        total_elapse += brute_module.get_elapse() or 0
+        show_progress('完成', start)
+        print()
 
     if subdomains:
         console.print(f"\n[bold green]完成![/bold green] 共发现 [yellow]{len(subdomains)}[/yellow] 个子域名")

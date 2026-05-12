@@ -4,6 +4,7 @@
 
 import time
 import asyncio
+import sys
 from pathlib import Path
 from typing import Optional, Set, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -112,7 +113,8 @@ class Brute:
                 self._wildcard_ips.add(info['ip'])
                 logger.warning(f'检测到泛解析，IP: {info["ip"]}')
                 return True
-        except Exception:
+        except Exception as e:
+            logger.debug(f'泛解析检测异常: {e}')
             pass
         return False
 
@@ -163,12 +165,13 @@ class Brute:
                         if info['ip'] in self._wildcard_ips:
                             return None
                     return candidate
-            except Exception:
+            except Exception as e:
+                logger.debug(f'DNS 解析异常 {candidate}: {e}')
                 pass
             return None
 
-        pbar = None
         last_update_percent = -1
+        start_time = time.time()
 
         if show_progress:
             pbar = tqdm(
@@ -177,35 +180,43 @@ class Brute:
                 ncols=60,
                 mininterval=0.5,
                 position=0,
-                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]',
+                leave=False,
             )
+        else:
+            pbar = None
+
+        def update_progress(completed):
+            nonlocal last_update_percent
+            if not show_progress:
+                return
+            current_percent = int(completed * 100 / total)
+            if current_percent - last_update_percent >= 1:
+                if pbar is not None:
+                    pbar.n = completed
+                    pbar.refresh()
+                last_update_percent = current_percent
 
         if self.concurrent > 1 and total > 1:
             with ThreadPoolExecutor(max_workers=min(self.concurrent, total)) as executor:
                 futures = {executor.submit(resolve_one, cand): cand for cand in candidates}
+                completed = 0
                 for future in as_completed(futures):
                     result = future.result()
                     if result:
                         results.add(result)
-                    if show_progress and pbar:
-                        pbar.update(1)
-                        current_percent = int(pbar.n * 100 / total)
-                        if current_percent - last_update_percent >= 5:
-                            pbar.refresh()
-                            last_update_percent = current_percent
+                    completed += 1
+                    update_progress(completed)
         else:
+            completed = 0
             for candidate in candidates:
                 result = resolve_one(candidate)
                 if result:
                     results.add(result)
-                if show_progress and pbar:
-                    pbar.update(1)
-                    current_percent = int(pbar.n * 100 / total)
-                    if current_percent - last_update_percent >= 5:
-                        pbar.refresh()
-                        last_update_percent = current_percent
+                completed += 1
+                update_progress(completed)
 
-        if show_progress and pbar:
+        if show_progress and pbar is not None:
             pbar.close()
 
         return results

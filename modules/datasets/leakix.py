@@ -4,6 +4,8 @@ LeakIX 数据集查询模块
 
 from typing import Optional, Set
 
+import requests
+
 from common.module import Module
 from common import utils
 
@@ -37,16 +39,26 @@ class LeakIX(Module):
 
         logger.info(f'开始 LeakIX 数据集查询: {self.domain}')
 
-        try:
-            url = 'https://leakix.net/search'
-            params = {
-                'q': f'subdomain:{self.domain}',
-            }
-            resp = self.get(url, params=params)
+        api_key = self.config.get('LEAKIX_API') if self.config else None
+        if not api_key:
+            logger.warning('LeakIX API key 未配置')
+            self.finish()
+            return self.subdomains
 
-            if resp and resp.text:
-                subdomains = self.match_subdomains(resp.text)
-                self.subdomains.update(subdomains)
+        try:
+            url = f'https://leakix.net/api/subdomains/{self.domain}'
+            headers = {
+                'api-key': api_key,
+                'accept': 'application/json'
+            }
+            resp = requests.get(url, headers=headers, timeout=self.timeout)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data:
+                    subdomain = item.get('subdomain')
+                    if subdomain:
+                        self.subdomains.add(subdomain.lower())
                 logger.info(f'LeakIX 查询完成，发现 {len(self.subdomains)} 个子域名')
 
         except Exception as e:
@@ -65,7 +77,4 @@ def run(domain: str, config: Optional[dict] = None) -> Set[str]:
     :return: 发现的子域名集合
     """
     module = LeakIX(domain, config)
-    module.begin()
-    subdomains = module.run()
-    module.finish()
-    return subdomains
+    return module.run()

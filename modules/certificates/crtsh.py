@@ -76,7 +76,4 @@ def run(domain: str, config: Optional[dict] = None) -> Set[str]:
     :return: 发现的子域名集合
     """
     module = Crtsh(domain, config)
-    module.begin()
-    subdomains = module.run()
-    module.finish()
-    return subdomains
+    return module.run()

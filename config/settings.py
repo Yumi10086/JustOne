@@ -181,6 +181,16 @@ class Settings(BaseSettings):
     hackertarget_api_key: str = ""
     # 360 Quake: https://quake.360.cn/
     quake_api_key: str = ""
+    # LeakIX: https://leakix.net/settings/api
+    leakix_api: str = ""
+
+    @field_validator("http_thread_count", mode="before")
+    @classmethod
+    def parse_empty_thread_count(cls, v):
+        """处理空字符串为 None"""
+        if v == '' or v is None:
+            return None
+        return v
 
     @field_validator("http_thread_count", mode="before")
     @classmethod
@@ -191,8 +201,90 @@ class Settings(BaseSettings):
         return v
 
     class Config:
-        env_file = ".env"
+        env_file = "config/.env"
         env_file_encoding = "utf-8"
 
 
 settings = Settings()
+
+
+class ConfigManager:
+    """统一配置管理器 - 提供向后兼容的配置访问"""
+
+    def __init__(self):
+        self._settings = settings
+
+    @property
+    def http_config(self):
+        return {
+            'timeout': self._settings.http_timeout,
+            'verify_ssl': self._settings.http_verify_ssl,
+            'enable_random_ua': self._settings.http_enable_random_ua,
+            'proxy_enable': self._settings.proxy_enable,
+            'proxy_pool': [],
+            'dns_nameservers': ['223.5.5.5', '119.29.29.29'],
+            'dns_timeout': 5,
+        }
+
+    @property
+    def resolve_config(self):
+        return {
+            'nameservers': ['223.5.5.5', '119.29.29.29', '114.114.114.114', '8.8.8.8', '1.1.1.1'],
+            'timeout': 5,
+            'lifetime': 10.0,
+        }
+
+    @property
+    def data_config(self):
+        return {
+            'data_dir': self._settings.data_dir,
+        }
+
+    @property
+    def db_config(self):
+        return {
+            'db_path': self._settings.data_dir / 'justone.db',
+        }
+
+    @property
+    def ipreg_config(self):
+        return {
+            'timeout': self._settings.http_timeout,
+            'verify_ssl': self._settings.http_verify_ssl,
+        }
+
+    @property
+    def ip_asn_config(self):
+        return {
+            'timeout': self._settings.http_timeout,
+            'verify_ssl': self._settings.http_verify_ssl,
+        }
+
+    @property
+    def export_config(self):
+        return {
+            'format': self._settings.result_save_format,
+            'alive_only': self._settings.result_export_alive,
+        }
+
+    @property
+    def collect_config(self):
+        return {
+            'enable': self._settings.collect_enable,
+            'timeout': self._settings.collect_module_timeout,
+            'max_concurrent': self._settings.collect_max_concurrent,
+        }
+
+    @property
+    def brute_config(self):
+        return {
+            'enable': self._settings.brute_enable,
+            'concurrent': self._settings.brute_concurrent,
+            'recursive': self._settings.brute_recursive,
+            'recursive_depth': self._settings.brute_recursive_depth,
+            'wildcard_check': self._settings.brute_wildcard_check,
+            'wildcard_deal': self._settings.brute_wildcard_deal,
+        }
+
+
+config_manager = ConfigManager()

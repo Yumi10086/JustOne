@@ -1,3 +1,11 @@
+"""
+SQLAlchemy 数据库记录模块
+
+.. deprecated::
+    此模块未被项目使用，仅保留以供参考。
+    如需使用 SQLAlchemy，请使用独立的数据库模块。
+"""
+
 import os
 from collections import OrderedDict
 from inspect import isclass

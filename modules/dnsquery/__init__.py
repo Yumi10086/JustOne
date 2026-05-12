@@ -2,4 +2,6 @@
 DNS 查询模块
 """
 
-__all__ = []
+from .mx import MXQuery
+
+__all__ = ['MXQuery']

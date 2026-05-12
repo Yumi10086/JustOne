@@ -6,6 +6,7 @@ from typing import Optional, Set
 
 from common.module import Module
 from common import utils
+from config.logging import logger
 
 
 class MXQuery(Module):
@@ -33,16 +34,17 @@ class MXQuery(Module):
         :return: 发现的子域名集合
         """
         self.begin()
-        logger = utils.get_logger()
 
         try:
-            from common.resolve import DNSResolver
-            resolver = DNSResolver()
-            mx_records = resolver.resolve(self.domain, 'MX')
-            for mx in mx_records:
-                subdomain = mx.split(' ')[-1] if mx else ''
-                if subdomain and subdomain.endswith(self.domain):
-                    self.subdomains.add(subdomain)
+            answer = utils.dns_query(self.domain, 'MX')
+            if answer:
+                for rr in answer:
+                    mx_str = str(rr).strip('.')
+                    parts = mx_str.split()
+                    if len(parts) >= 2:
+                        mx_domain = parts[1]
+                        if mx_domain.endswith(self.domain):
+                            self.subdomains.add(mx_domain.lower())
             logger.info(f'MX 查询完成，发现 {len(self.subdomains)} 个子域名')
         except Exception as e:
             logger.error(f'MX 查询出错: {e}')

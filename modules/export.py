@@ -21,13 +21,13 @@ def set_export_config(config: dict):
     export_config.update(config)
 
 
-def export_results(results: List[Dict[str, Any]], output: Path, format: str = 'csv'):
+def export_results(results: List[Dict[str, Any]], output: Path, fmt: str = 'csv'):
     """
     导出子域结果到文件
 
     :param List[Dict[str, Any]] results: 结果列表
     :param Path output: 输出文件路径
-    :param str format: 导出格式，支持 'csv' 和 'json'
+    :param str fmt: 导出格式，支持 'csv' 和 'json'
     """
     if not results:
         logger.warning('结果为空，无需导出')
@@ -35,8 +35,8 @@ def export_results(results: List[Dict[str, Any]], output: Path, format: str = 'c
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    format = format.lower()
-    if format == 'json':
+    fmt = fmt.lower()
+    if fmt == 'json':
         return _export_json(results, output)
     else:
         return _export_csv(results, output)
@@ -81,13 +81,13 @@ def _export_json(results: List[Dict[str, Any]], output: Path) -> bool:
         return False
 
 
-def export_subdomains(subdomains: List[str], output: Path, format: str = 'txt'):
+def export_subdomains(subdomains: List[str], output: Path, fmt: str = 'txt'):
     """
     导出子域名列表（简单格式）
 
     :param List[str] subdomains: 子域名列表
     :param Path output: 输出文件路径
-    :param str format: 导出格式，支持 'txt' 和 'json'
+    :param str fmt: 导出格式，支持 'txt' 和 'json'
     """
     if not subdomains:
         logger.warning('子域名列表为空，无需导出')
@@ -95,8 +95,8 @@ def export_subdomains(subdomains: List[str], output: Path, format: str = 'txt'):
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    format = format.lower()
-    if format == 'json':
+    fmt = fmt.lower()
+    if fmt == 'json':
         try:
             with open(output, 'w', encoding='utf-8') as f:
                 json.dump(subdomains, f, ensure_ascii=False, indent=2)
