@@ -4,6 +4,7 @@
 """
 
 import time
+import threading
 from typing import Optional, Set, List, Dict, Any, Type
 
 from config.logging import logger
@@ -82,10 +83,21 @@ class Collect:
             return
 
         try:
-            from modules.search import BaiduSearch, BingSearch
+            from modules.search import (
+                BaiduSearch, BingSearch, FoFa, Hunter, ShodanAPI,
+                ZoomEyeAPI, GithubAPI, GoogleAPI, Yahoo, Yandex,
+            )
             self.search_modules = [
                 BaiduSearch(self.registered_domain, self.config),
                 BingSearch(self.registered_domain, self.config),
+                FoFa(self.registered_domain, self.config),
+                Hunter(self.registered_domain, self.config),
+                ShodanAPI(self.registered_domain, self.config),
+                ZoomEyeAPI(self.registered_domain, self.config),
+                GithubAPI(self.registered_domain, self.config),
+                GoogleAPI(self.registered_domain, self.config),
+                Yahoo(self.registered_domain, self.config),
+                Yandex(self.registered_domain, self.config),
             ]
             logger.debug(f'已加载 {len(self.search_modules)} 个搜索引擎模块')
         except ImportError as e:
@@ -140,7 +152,7 @@ class Collect:
 
     def _run_module(self, module: Any) -> Set[str]:
         """
-        执行单个模块
+        执行单个模块（带超时保护）
 
         :param module: 模块实例
         :return: 发现的子域名集合
@@ -148,13 +160,34 @@ class Collect:
         module_name = getattr(module, 'module', 'Unknown')
         source = getattr(module, 'source', 'unknown')
 
+        result: Set[str] = set()
+        exception: Optional[Exception] = None
+
+        def _run():
+            nonlocal result, exception
+            try:
+                result = module.run()
+            except Exception as e:
+                exception = e
+
         try:
             logger.info(f'执行 {source} 模块')
             module_start = time.time()
-            subdomains = module.run()
+
+            thread = threading.Thread(target=_run, daemon=True)
+            thread.start()
+            thread.join(timeout=self.module_timeout)
+
+            if thread.is_alive():
+                logger.error(f'{source} 模块执行超时（{self.module_timeout}秒），跳过')
+                return set()
+
+            if exception:
+                raise exception
+
             module_elapse = round(time.time() - module_start, 1)
-            logger.info(f'{source} 模块完成，发现 {len(subdomains)} 个子域名，耗时 {module_elapse} 秒')
-            return subdomains
+            logger.info(f'{source} 模块完成，发现 {len(result)} 个子域名，耗时 {module_elapse} 秒')
+            return result
         except Exception as e:
             logger.error(f'{source} 模块执行出错: {e}')
             return set()

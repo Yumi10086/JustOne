@@ -51,6 +51,16 @@ from modules.collect import Collect
 from modules.brute import Brute
 from modules.export import export_subdomains, export_results
 from common.domain import Domain
+from common import utils
+
+# 初始化全局 HTTP 配置（代理等）
+utils.set_http_config(
+    timeout=settings.http_timeout,
+    verify_ssl=settings.http_verify_ssl,
+    enable_random_ua=settings.http_enable_random_ua,
+    proxy_enable=settings.proxy_enable,
+    proxy_pool=settings.get_proxy_list(),
+)
 
 
 __version__ = "1.0.0"
@@ -127,6 +137,7 @@ def main(
         'enable_certificate': not disable_cert,
         'enable_dataset': not disable_dataset,
         'save_module_result': False,
+        'proxy_enable': settings.proxy_enable,
         'LEAKIX_API': settings.leakix_api,
     }
 

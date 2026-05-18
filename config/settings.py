@@ -68,6 +68,14 @@ class Settings(BaseSettings):
     # ==================== 代理配置 ====================
     # 是否启用代理
     proxy_enable: bool = False
+    # 代理地址列表，例如 ["http://127.0.0.1:10809", "http://127.0.0.1:7890"]
+    proxy_pool: str = ""
+
+    def get_proxy_list(self) -> list:
+        """解析代理池字符串为列表"""
+        if not self.proxy_pool:
+            return []
+        return [addr.strip() for addr in self.proxy_pool.split(",") if addr.strip()]
 
     # ==================== 暴力破解模块配置 ====================
     # 启用暴力破解模块
@@ -129,6 +137,7 @@ class Settings(BaseSettings):
     # Censys: https://censys.io/api
     censys_api_id: str = ""
     censys_api_secret: str = ""
+    censys_api_token: str = ""
     # Binaryedge: https://app.binaryedge.io/account/api
     binaryedge_api: str = ""
     # Chinaz: http://api.chinaz.com/ApiDetails/Alexa
@@ -156,6 +165,7 @@ class Settings(BaseSettings):
     # ZoomEye: https://www.zoomeye.org/doc?channel=api
     zoomeye_email: str = ""
     zoomeye_password: str = ""
+    zoomeye_api: str = ""
     # Spyse: https://spyse.com/
     spyse_api_token: str = ""
     # CIRCL: https://www.circl.lu/services/passive-dns/
@@ -221,7 +231,7 @@ class ConfigManager:
             'verify_ssl': self._settings.http_verify_ssl,
             'enable_random_ua': self._settings.http_enable_random_ua,
             'proxy_enable': self._settings.proxy_enable,
-            'proxy_pool': [],
+            'proxy_pool': self._settings.get_proxy_list(),
             'dns_nameservers': ['223.5.5.5', '119.29.29.29'],
             'dns_timeout': 5,
         }

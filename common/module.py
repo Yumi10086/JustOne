@@ -15,7 +15,7 @@ from common import utils
 from common.database import Database
 
 http_config = {
-    'timeout': 5,
+    'timeout': 27,
     'verify_ssl': False,
     'proxy_enable': False,
     'dns_nameservers': [],
@@ -59,6 +59,8 @@ class Module(object):
         self.end = None
         self.elapse = None
 
+        self._session = None
+
     def have_api(self, *apis):
         """
         检查 API 信息是否配置完整
@@ -70,6 +72,17 @@ class Module(object):
             logger.debug(f'{self.source} 模块未配置')
             return False
         return True
+
+    def _get_session(self) -> requests.Session:
+        """
+        获取或创建持久化 Session（复用连接和 Cookie）
+
+        :return: requests.Session 实例
+        """
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.trust_env = False
+        return self._session
 
     def begin(self):
         """记录模块开始的日志"""
@@ -94,8 +107,7 @@ class Module(object):
         :param kwargs: 其他参数
         :return: 响应对象
         """
-        session = requests.Session()
-        session.trust_env = False
+        session = self._get_session()
         level = 'ERROR'
         if ignore:
             level = 'DEBUG'
@@ -129,8 +141,7 @@ class Module(object):
         :param kwargs: 其他参数
         :return: 响应对象
         """
-        session = requests.Session()
-        session.trust_env = False
+        session = self._get_session()
         level = 'ERROR'
         if ignore:
             level = 'DEBUG'
@@ -166,8 +177,7 @@ class Module(object):
         :param kwargs: 其他参数
         :return: 响应对象
         """
-        session = requests.Session()
-        session.trust_env = False
+        session = self._get_session()
         try:
             resp = session.post(url,
                                 data=data,
@@ -195,8 +205,7 @@ class Module(object):
         :param kwargs: 其他参数
         :return: 响应对象
         """
-        session = requests.Session()
-        session.trust_env = False
+        session = self._get_session()
         try:
             resp = session.delete(url,
                                    cookies=self.cookie,
