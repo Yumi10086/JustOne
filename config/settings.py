@@ -173,6 +173,10 @@ class Settings(BaseSettings):
     threatbook_api_key: str = ""
     # VirusTotal: https://www.virustotal.com/gui/my-apikey
     virustotal_api_key: str = ""
+    # VirusTotal 分页每页间隔秒数（免费版 4 req/min，建议 ≥15；付费 API 可降至 1-2）
+    virustotal_page_delay: int = 16
+    # VirusTotal 最大拉取页数（每页 40 条，50 页 = 2000 条）
+    virustotal_max_pages: int = 50
 
 
     @field_validator("http_thread_count", mode="before")

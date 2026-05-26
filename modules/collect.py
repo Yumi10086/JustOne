@@ -4,22 +4,32 @@
 """
 
 import time
+import asyncio
 import threading
+import uuid
 from typing import Optional, Set, List, Dict, Any, Type
 
 from config.logging import logger
 from common.domain import Domain
+from common import resolve
 
 
 collect_config = {
     'enabled': True,
     'module_timeout': 120,
-    'max_concurrent': 50,
+    'max_concurrent': 25,
     'save_module_result': False,
     'enable_search': True,
     'enable_certificate': True,
     'enable_dataset': True,
     'enable_intelligence': True,
+    # 按 source 名称覆盖默认超时（秒）。Playwright 模块 / 慢速 API 需要更长时间。
+    'module_timeout_override': {
+        'search.yahoo.com': 300,
+        'virustotal': 1200,
+    },
+    # 收集完成后对结果进行泛解析 DNS 过滤
+    'wildcard_filter': True,
 }
 
 
@@ -45,12 +55,15 @@ class Collect:
         self.domain = domain
         self.config = config or {}
         self.module_timeout = self.config.get('module_timeout', collect_config.get('module_timeout', 120))
+        self.module_timeout_override = self.config.get('module_timeout_override', collect_config.get('module_timeout_override', {}))
         self.max_concurrent = self.config.get('max_concurrent', collect_config.get('max_concurrent', 50))
         self.save_module_result = self.config.get('save_module_result', collect_config.get('save_module_result', False))
         self.enable_search = self.config.get('enable_search', collect_config.get('enable_search', True))
         self.enable_certificate = self.config.get('enable_certificate', collect_config.get('enable_certificate', True))
         self.enable_dataset = self.config.get('enable_dataset', collect_config.get('enable_dataset', True))
         self.enable_intelligence = self.config.get('enable_intelligence', collect_config.get('enable_intelligence', True))
+        self.wildcard_filter = self.config.get('wildcard_filter', collect_config.get('wildcard_filter', True))
+        self._wildcard_ip: Optional[str] = None
 
         self.domain_obj = Domain(domain)
         self.registered_domain = self.domain_obj.registered()
@@ -200,25 +213,15 @@ class Collect:
 
     def run(self) -> List[str]:
         """
-        执行收集任务
+        执行收集任务（同步入口）
 
+        内部通过 asyncio.run 驱动异步调度器。
+        注意：不要在已有事件循环中调用此方法，应直接 await run_async()。
         :return: 子域名列表
         """
-        logger.info(f'开始收集 {self.domain} 的子域名')
-        self.start_time = time.time()
+        return asyncio.run(self.run_async())
 
-        self._run_search_modules()
-        self._run_certificate_modules()
-        self._run_dataset_modules()
-        self._run_dnsquery_modules()
-        self._run_intelligence_modules()
-
-        self.end_time = time.time()
-        self.elapse = round(self.end_time - self.start_time, 1)
-        logger.info(f'收集完成，共发现 {len(self.subdomains)} 个子域名，耗时 {self.elapse} 秒')
-
-        return list(self.subdomains)
-
+    # 废弃：保留用于兼容，新调度器使用 _run_module_async
     def _run_module(self, module: Any) -> Set[str]:
         """
         执行单个模块（带超时保护）
@@ -260,6 +263,86 @@ class Collect:
         except Exception as e:
             logger.error(f'{source} 模块执行出错: {e}')
             return set()
+
+    async def _run_module_async(self, module: Any) -> Optional[tuple]:
+        """
+        异步执行单个模块（带超时保护，支持按 source 覆盖超时）
+
+        同步模块通过 daemon 线程执行，超时后线程被放弃
+        （其后续日志不影响主流程）。
+
+        :param module: 模块实例
+        :return: (子域名集合, 耗时) 或 None
+        """
+        source = getattr(module, 'source', 'unknown')
+        timeout = self.module_timeout_override.get(source, self.module_timeout)
+
+        try:
+            logger.info(f'执行 {source} 模块（超时: {timeout}秒）')
+            module_start = time.time()
+
+            if hasattr(module, 'run_async') and asyncio.iscoroutinefunction(module.run_async):
+                result = await asyncio.wait_for(
+                    module.run_async(), timeout=timeout
+                )
+            else:
+                # 同步模块：daemon 线程 + join(timeout)，超时后放弃线程
+                result, exception = await self._run_sync_in_thread(
+                    module, timeout
+                )
+                if exception:
+                    raise exception
+
+            module_elapse = round(time.time() - module_start, 1)
+            logger.info(
+                f'{source} 模块完成，发现 {len(result)} 个子域名，'
+                f'耗时 {module_elapse} 秒'
+            )
+            return (result, module_elapse)
+
+        except asyncio.TimeoutError:
+            logger.error(
+                f'{source} 模块执行超时（{timeout}秒），跳过'
+            )
+            return None
+        except Exception as e:
+            logger.error(f'{source} 模块执行出错: {e}')
+            return None
+
+    async def _run_sync_in_thread(self, module: Any, timeout: float):
+        """
+        在 daemon 线程中执行同步模块，超时后放弃线程。
+
+        :param module: 模块实例
+        :param float timeout: 超时秒数
+        :return: (result, exception) — 正常时 exception 为 None
+        :raises asyncio.TimeoutError: 线程未在 timeout 内完成
+        """
+        loop = asyncio.get_running_loop()
+        result = None
+        exception = None
+        done = threading.Event()
+
+        def _run():
+            nonlocal result, exception
+            try:
+                result = module.run()
+            except Exception as e:
+                exception = e
+            finally:
+                done.set()
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        # 在线程池中执行 join（避免阻塞事件循环）
+        await loop.run_in_executor(None, thread.join, timeout)
+
+        if not done.is_set():
+            # 超时：线程仍在运行（daemon，进程退出时自动终止）
+            raise asyncio.TimeoutError()
+
+        return result, exception
 
     def _run_search_modules(self):
         """执行搜索引擎模块收集"""
@@ -337,6 +420,146 @@ class Collect:
 
         self.modules_results[module_name] = subdomains
         logger.debug(f'{module_name} 模块发现 {new_count - old_count} 个新子域名')
+
+    async def _detect_wildcard_ip(self) -> Optional[str]:
+        """
+        检测目标域名是否存在泛解析，返回泛解析 IP。
+
+        构造随机不存在的子域名进行 DNS 解析，
+        如果解析成功则说明存在泛解析，返回解析到的 IP。
+        :return: 泛解析 IP，未检测到返回 None
+        """
+        prefix = f'_wc_{uuid.uuid4().hex[:12]}'
+        test_domain = f'{prefix}.{self.registered_domain}'
+        logger.debug(f'检测泛解析: {test_domain}')
+
+        loop = asyncio.get_running_loop()
+        info = await loop.run_in_executor(
+            None, resolve.resolve_domain, test_domain
+        )
+        if info and info.get('resolve') and info.get('ip'):
+            wildcard_ip = info['ip']
+            logger.warning(
+                f'检测到泛解析 — {test_domain} 解析到 {wildcard_ip}'
+            )
+            return wildcard_ip
+        logger.debug('未检测到泛解析')
+        return None
+
+    async def _filter_wildcard_subdomains(self, wildcard_ip: str) -> int:
+        """
+        并发解析所有已收集子域名，移除解析到泛解析 IP 的条目。
+
+        :param str wildcard_ip: 泛解析 IP 地址
+        :return: 被移除的子域名数量
+        """
+        subdomains = list(self.subdomains)
+        total = len(subdomains)
+        logger.info(f'泛解析过滤: 检查 {total} 个子域名，目标 IP: {wildcard_ip}')
+
+        loop = asyncio.get_running_loop()
+        semaphore = asyncio.Semaphore(50)  # 限制并发 DNS 查询
+
+        async def resolve_one(subdomain: str) -> Optional[str]:
+            async with semaphore:
+                info = await loop.run_in_executor(
+                    None, resolve.resolve_domain, subdomain
+                )
+                if info and info.get('ip') == wildcard_ip:
+                    return subdomain
+            return None
+
+        tasks = [resolve_one(s) for s in subdomains]
+        results = await asyncio.gather(*tasks)
+
+        to_remove = {r for r in results if r is not None}
+        if to_remove:
+            self.subdomains.difference_update(to_remove)
+            logger.warning(
+                f'泛解析过滤: 移除了 {len(to_remove)} 个泛解析子域名，'
+                f'剩余 {len(self.subdomains)} 个'
+            )
+        else:
+            logger.debug('泛解析过滤: 无匹配子域名')
+        return len(to_remove)
+
+    async def run_async(self) -> List[str]:
+        """
+        异步执行收集任务（asyncio 原生入口）
+
+        并发调度所有模块类型，每个模块独立超时保护。
+        先检测泛解析，若存在则限制高耗时模块的拉取量。
+        :return: 子域名列表
+        """
+        logger.info(f'开始收集 {self.domain} 的子域名')
+        self.start_time = time.time()
+
+        all_modules = (
+            self.search_modules + self.certificate_modules +
+            self.dataset_modules + self.dnsquery_modules +
+            self.intelligence_modules
+        )
+
+        # 先检测泛解析：若存在则限制 VirusTotal 等高频模块的拉取页数
+        if self.wildcard_filter:
+            wildcard_ip = await self._detect_wildcard_ip()
+            if wildcard_ip:
+                self._wildcard_ip = wildcard_ip
+                for module in all_modules:
+                    source = getattr(module, 'source', '')
+                    if source == 'virustotal' and hasattr(module, 'max_pages'):
+                        old = module.max_pages
+                        module.max_pages = min(old, 5)
+                        logger.info(
+                            f'检测到泛解析，{source} max_pages: {old} → {module.max_pages}'
+                        )
+                        break
+        else:
+            self._wildcard_ip = None
+
+        total = len(all_modules)
+        logger.info(f'并发执行 {total} 个模块（并发数: {self.max_concurrent}）')
+
+        semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        async def _run_with_semaphore(module):
+            async with semaphore:
+                return await self._run_module_async(module)
+
+        tasks = [_run_with_semaphore(m) for m in all_modules if m is not None]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for module, result in zip(all_modules, results):
+            if isinstance(result, Exception):
+                module_name = getattr(module, 'module', 'unknown')
+                logger.error(f'{module_name} 模块异常: {result}')
+                continue
+            if result is None:
+                continue
+            module_name = getattr(module, 'module', 'unknown')
+            self.add_subdomains(result[0], module_name)
+
+        for module in all_modules:
+            if hasattr(module, 'cleanup'):
+                try:
+                    await asyncio.wait_for(module.cleanup(), timeout=5)
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    pass
+
+        # 泛解析过滤：移除解析到泛解析 IP 的子域名
+        if self._wildcard_ip and len(self.subdomains) >= 10:
+            await self._filter_wildcard_subdomains(self._wildcard_ip)
+
+        self.end_time = time.time()
+        self.elapse = round(self.end_time - self.start_time, 1)
+        logger.info(
+            f'收集完成，共发现 {len(self.subdomains)} 个子域名，'
+            f'耗时 {self.elapse} 秒'
+        )
+
+        return list(self.subdomains)
 
     def add_module(self, module_class: Type, module_type: str = 'search'):
         """

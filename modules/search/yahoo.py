@@ -7,12 +7,13 @@ import random
 from typing import Optional, Set
 from urllib.parse import urlencode
 
+from common.async_module import AsyncModuleMixin
 from common.search import Search
 from common.utils import new_browser_context
 from config.logging import logger
 
 
-class Yahoo(Search):
+class Yahoo(Search, AsyncModuleMixin):
     """
     Yahoo 搜索引擎子域收集模块
     """
@@ -115,8 +116,23 @@ class Yahoo(Search):
                 for subdomain in self.recursive_subdomain():
                     await self._search_pages(page, f'site:{subdomain}')
         finally:
-            await browser.close()
-            await pw.stop()
+            # shield 防止 CancelledError 中断清理导致 Playwright 帧分离
+            await asyncio.shield(browser.close())
+            await asyncio.shield(pw.stop())
+
+    async def run_async(self) -> Set[str]:
+        """
+        异步执行 Yahoo 搜索（供调度器直接调用）
+
+        :return: 子域名集合
+        """
+        self.begin()
+        await self._search_all()
+        self.finish()
+        self.save_json()
+        self.gen_result()
+        self.save_db()
+        return self.subdomains
 
     def run(self) -> Set[str]:
         """执行 Yahoo 搜索"""

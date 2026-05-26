@@ -276,7 +276,17 @@ def check(
 
     if results:
         if not output:
-            output = get_default_output('result', 'check', format)
+            if input_file and subdomains:
+                # -i 模式：从第一个子域名提取注册域名作为文件名
+                first = next(iter(subdomains))
+                domain_obj = Domain(first)
+                extracted = domain_obj.registered()
+                if extracted:
+                    output = get_default_output(extracted, 'check', format)
+                else:
+                    output = get_default_output('result', 'check', format)
+            else:
+                output = get_default_output('result', 'check', format)
         if format == 'txt':
             output.parent.mkdir(parents=True, exist_ok=True)
             with open(output, 'w', encoding='utf-8') as f:

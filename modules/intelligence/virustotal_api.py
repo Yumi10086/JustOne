@@ -36,8 +36,8 @@ class VirusTotalAPI(Module):
         self.api = settings.virustotal_api_key
         self.addr = f'https://www.virustotal.com/api/v3/domains/{self.domain}/subdomains'
         self.page_size = 40         # VT API v3 最大 40
-        self.max_pages = 50         # 安全上限，防止意外无限循环
-        self.page_delay = 16        # 免费版 4 req/min，每页间隔 16s
+        self.max_pages = settings.virustotal_max_pages
+        self.page_delay = settings.virustotal_page_delay
 
     def _query(self):
         """
