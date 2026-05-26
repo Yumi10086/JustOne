@@ -4,6 +4,8 @@ DNS 解析验证模块
 
 from typing import Optional, Dict, Any, Set
 
+from tqdm import tqdm
+
 from common.module import Module
 from common import resolve
 from common import utils
@@ -47,11 +49,12 @@ class DNSCheck(Module):
             logger.debug(f'{subdomain} DNS 解析失败: {e}')
         return None
 
-    def run(self, subdomains: Optional[Set[str]] = None) -> list:
+    def run(self, subdomains: Optional[Set[str]] = None, show_progress: bool = True) -> list:
         """
         执行 DNS 解析验证
 
         :param Set[str] subdomains: 要检查的子域名集合
+        :param bool show_progress: 是否显示进度条
         :return: 可解析的子域名列表
         """
         target_subdomains = subdomains or self.subdomains
@@ -63,11 +66,23 @@ class DNSCheck(Module):
         self.begin()
 
         resolved_list = []
+        if show_progress:
+            pbar = tqdm(
+                total=len(target_subdomains),
+                desc='DNS 解析',
+                ncols=60,
+                mininterval=0.3,
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
+            )
         for subdomain in target_subdomains:
             result = self.check(subdomain)
             if result:
                 resolved_list.append(result)
                 self.infos[subdomain] = result
+            if show_progress:
+                pbar.update(1)
+        if show_progress:
+            pbar.close()
 
         self.subdomains = set(r['subdomain'] for r in resolved_list)
         self.finish()

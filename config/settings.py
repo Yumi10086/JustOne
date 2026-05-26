@@ -138,46 +138,20 @@ class Settings(BaseSettings):
     censys_api_id: str = ""
     censys_api_secret: str = ""
     censys_api_token: str = ""
-    # Binaryedge: https://app.binaryedge.io/account/api
-    binaryedge_api: str = ""
     # Chinaz: http://api.chinaz.com/ApiDetails/Alexa
     chinaz_api: str = ""
-    # Bing: https://azure.microsoft.com/zh-cn/services/cognitive-services/bing-web-search-api/
-    bing_api_id: str = ""
-    bing_api_key: str = ""
     # SecurityTrails: https://securitytrails.com/corp/api
     securitytrails_api: str = ""
     # FOFA: https://fofa.so/api
     fofa_email: str = ""
     fofa_api_key: str = ""
-    # Google: https://developers.google.com/custom-search/v1/overview
-    google_api_id: str = ""
-    google_api_key: str = ""
-    # RiskIQ: https://api.passivedotal.org/api/docs/
-    riskiq_username: str = ""
-    riskiq_api_key: str = ""
     # Shodan: https://account.shodan.io/register
     shodan_api_key: str = ""
-    # ThreatBook: https://x.threatbook.cn/nodev4/vb4/myAPI
-    threatbook_api_key: str = ""
-    # VirusTotal: https://developers.virustotal.com/reference
-    virustotal_api_key: str = ""
     # ZoomEye: https://www.zoomeye.org/doc?channel=api
-    zoomeye_email: str = ""
-    zoomeye_password: str = ""
     zoomeye_api: str = ""
-    # Spyse: https://spyse.com/
-    spyse_api_token: str = ""
     # CIRCL: https://www.circl.lu/services/passive-dns/
     circl_username: str = ""
     circl_password: str = ""
-    # DNSDB: https://www.dnsdb.info/
-    dnsdb_api_key: str = ""
-    # IPv4Info: http://ipv4info.com/tools/api/
-    ipv4info_api_key: str = ""
-    # PassiveDNS: https://github.com/360netlab/flint
-    passivedns_addr: str = ""
-    passivedns_token: str = ""
     # GitHub: https://github.com/settings/tokens
     github_api_user: str = ""
     github_token: str = ""
@@ -187,12 +161,19 @@ class Settings(BaseSettings):
     hunter_api_key: str = ""
     # FullHunt: https://api-docs.fullhunt.io/
     fullhunt_api_key: str = ""
-    # HackerTarget: https://api.hackertarget.com/
-    hackertarget_api_key: str = ""
-    # 360 Quake: https://quake.360.cn/
-    quake_api_key: str = ""
+    # DNSDumpster: https://dnsdumpster.com/developer/
+    dnsdumpster_api_key: str = ""
     # LeakIX: https://leakix.net/settings/api
     leakix_api: str = ""
+    # AlienVault OTX: https://otx.alienvault.com/settings/api
+    alienvault_api_key: str = ""
+    # URLScan: https://urlscan.io/user/profile/
+    urlscan_api_key: str = ""
+    # ThreatBook (微步在线): https://x.threatbook.com/v5/myApi
+    threatbook_api_key: str = ""
+    # VirusTotal: https://www.virustotal.com/gui/my-apikey
+    virustotal_api_key: str = ""
+
 
     @field_validator("http_thread_count", mode="before")
     @classmethod

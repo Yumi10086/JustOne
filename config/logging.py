@@ -17,7 +17,7 @@ def init_logging(debug: bool = False):
     level = "DEBUG" if debug else "INFO"
     fmt = (
         "<green>{time:HH:mm:ss}</green> "
-        "[<level>{level: <5}</level>] "
+        "[<level>{level}</level>] "
         "<cyan>{name}:{line}</cyan> "
         "<level>{message}</level>"
     )
@@ -27,7 +27,7 @@ def init_logging(debug: bool = False):
         log_path,
         level="DEBUG",
         encoding="utf-8",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <5} | {name}.{function}:{line} | {message}",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}.{function}:{line} | {message}",
         rotation="10 MB",
         retention="7 days"
     )

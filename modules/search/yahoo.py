@@ -1,12 +1,14 @@
 ﻿"""
-Yahoo 搜索模块
+Yahoo 搜索模块（Playwright 异步）
 """
 
+import asyncio
 import random
-import time
 from typing import Optional, Set
+from urllib.parse import urlencode
 
 from common.search import Search
+from common.utils import new_browser_context
 from config.logging import logger
 
 
@@ -28,11 +30,11 @@ class Yahoo(Search):
         self.limit_num = 1000
         self.per_page_num = 30
 
-    def _is_blocked(self, resp) -> bool:
+    def _is_blocked(self, html: str) -> bool:
         """检测反爬虫拦截"""
-        if not resp or not resp.text:
+        if not html:
             return True
-        text_lower = resp.text.lower()
+        text_lower = html.lower()
         blocked = ['captcha', 'verify', 'unusual traffic',
                    'are you a human', 'security check', 'challenge',
                    'not a robot', 'verify you are human']
@@ -40,61 +42,86 @@ class Yahoo(Search):
             if kw in text_lower:
                 logger.warning(f'Yahoo 返回拦截页面（关键词: {kw}）')
                 return True
-        if resp.status_code in (302, 403, 429):
-            logger.warning(f'Yahoo 请求被拦截，状态码: {resp.status_code}')
-            return True
         return False
 
-    def search(self, domain: str, filtered_subdomain: str = ''):
+    async def _search_pages(self, page, query: str):
         """
-        发送搜索请求并做子域匹配
+        对指定搜索词进行分页搜索
 
-        :param str domain: 域名
-        :param str filtered_subdomain: 过滤的子域
+        :param page: Playwright Page 实例
+        :param str query: 搜索关键词
         """
-        self.get_header()
-        self.header['Referer'] = 'https://search.yahoo.com/'
-        self.proxy = self.get_proxy(self.source)
-        resp = self.get(self.init)
-        if not resp or self._is_blocked(resp):
-            return
-        self.cookie = resp.cookies
-        self.page_num = 0
+        page_num = 0
+
         while True:
-            time.sleep(random.uniform(3, 6))
-            self.proxy = self.get_proxy(self.source)
-            self.get_header()
-            self.header['Referer'] = 'https://search.yahoo.com/'
-            query = 'site:' + domain + filtered_subdomain
-            params = {'p': query, 'b': self.page_num, 'pz': self.per_page_num}
-            resp = self.get(self.addr, params)
-            if not resp or self._is_blocked(resp):
-                return
-            text = resp.text.replace('<b>', '').replace('</b>', '')
-            subdomains = self.match_subdomains(text, fuzzy=True)
+            await asyncio.sleep(random.uniform(3, 6))
+            params = {'p': query, 'b': page_num, 'pz': self.per_page_num}
+            search_url = f'{self.addr}?{urlencode(params)}'
+
+            try:
+                await page.goto(search_url, timeout=30000, wait_until='domcontentloaded')
+            except Exception as e:
+                logger.warning(f'Yahoo 搜索请求失败: {e}')
+                break
+
+            html = await page.content()
+
+            if self._is_blocked(html):
+                break
+
+            subdomains = self.match_subdomains(html, fuzzy=True)
             subdomains = {s for s in subdomains
                           if not s.lower().startswith('2f')
                           and not s.lower().startswith('%2f')}
+
             if not self.check_subdomains(subdomains):
                 break
+
             self.subdomains.update(subdomains)
-            if '>Next</a>' not in resp.text:
+            page_num += self.per_page_num
+
+            if '>Next</a>' not in html:
                 break
-            self.page_num += self.per_page_num
-            if self.page_num >= self.limit_num:
+            if page_num >= self.limit_num:
                 break
+
+    async def _search_all(self):
+        """异步搜索入口，管理浏览器生命周期"""
+        self.get_header()
+        self.proxy = self.get_proxy(self.source)
+
+        browser, context, pw = await new_browser_context(
+            proxy=self.proxy,
+            user_agent=self.header.get('User-Agent'),
+        )
+        if not browser:
+            return
+
+        try:
+            page = await context.new_page()
+
+            try:
+                await page.goto(self.init, timeout=30000, wait_until='domcontentloaded')
+            except Exception as e:
+                logger.warning(f'Yahoo 首页访问失败: {e}')
+
+            query = f'site:{self.domain}'
+            await self._search_pages(page, query)
+
+            for statement in self.filter(self.domain, self.subdomains):
+                await self._search_pages(page, f'site:{self.domain} -{statement}')
+
+            if self.recursive:
+                for subdomain in self.recursive_subdomain():
+                    await self._search_pages(page, f'site:{subdomain}')
+        finally:
+            await browser.close()
+            await pw.stop()
 
     def run(self) -> Set[str]:
         """执行 Yahoo 搜索"""
         self.begin()
-        self.search(self.domain)
-
-        for statement in self.filter(self.domain, self.subdomains):
-            self.search(self.domain, filtered_subdomain=statement)
-
-        if self.recursive:
-            for subdomain in self.recursive_subdomain():
-                self.search(subdomain)
+        asyncio.run(self._search_all())
         self.finish()
         self.save_json()
         self.gen_result()

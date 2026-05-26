@@ -631,3 +631,187 @@ def get_ns_path(data_dir, in_china=None, enable_wildcard=None, ns_ip_list=None):
     ns_data = '\n'.join(ns_ip_list)
     save_to_file(path, ns_data)
     return path
+
+
+# === Playwright 异步工具 ===
+
+def _convert_playwright_proxy(proxy):
+    """
+    将 requests 格式的代理转换为 Playwright 格式
+
+    :param proxy: 代理配置（requests 格式或 Playwright 格式）
+    :return: Playwright 代理字典
+    """
+    if not proxy:
+        return None
+    if isinstance(proxy, dict) and 'server' in proxy:
+        return proxy
+    if isinstance(proxy, dict):
+        server = proxy.get('http') or proxy.get('https') or ''
+        if server:
+            return {'server': server}
+    if isinstance(proxy, str):
+        return {'server': proxy}
+    return None
+
+
+async def new_browser_context(*, proxy=None, user_agent=None, headless=True,
+                              viewport=None, locale="en-US", timezone_id="America/New_York",
+                              channel="chrome"):
+    """
+    创建 Playwright 浏览器和上下文
+
+    :param proxy: 代理配置，支持 Playwright 或 requests 格式
+    :param user_agent: 自定义 User-Agent
+    :param headless: 是否无头模式
+    :param viewport: 视口大小 {"width": 1920, "height": 1080}
+    :param locale: 语言区域
+    :param timezone_id: 时区
+    :return: (browser, context, playwright) 元组，失败返回 (None, None, None)
+    """
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as e:
+        get_logger().error(f'Playwright 未安装: {e}')
+        return None, None, None
+
+    pw = None
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=headless,
+            channel=channel,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+            ]
+        )
+
+        playwright_proxy = _convert_playwright_proxy(proxy)
+
+        context_options = {
+            'user_agent': user_agent or random.choice(user_agents),
+            'locale': locale,
+            'timezone_id': timezone_id,
+        }
+
+        if viewport:
+            context_options['viewport'] = viewport
+
+        if playwright_proxy:
+            context_options['proxy'] = playwright_proxy
+
+        context = await browser.new_context(**context_options)
+
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
+            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+            window.chrome = {runtime: {}};
+            const _query = window.navigator.permissions.query.bind(window.navigator.permissions);
+            window.navigator.permissions.query = function(params) {
+                if (params.name === 'notifications')
+                    return Promise.resolve({state: Notification.permission});
+                return _query(params);
+            };
+        """)
+
+        return browser, context, pw
+    except Exception as e:
+        get_logger().error(f'Playwright 浏览器启动失败: {e}')
+        if pw is not None:
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+        return None, None, None
+
+    try:
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(
+            headless=headless,
+            channel=channel,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+            ]
+        )
+
+        playwright_proxy = _convert_playwright_proxy(proxy)
+
+        context_options = {
+            'user_agent': user_agent or random.choice(user_agents),
+            'locale': locale,
+            'timezone_id': timezone_id,
+        }
+
+        if viewport:
+            context_options['viewport'] = viewport
+
+        if playwright_proxy:
+            context_options['proxy'] = playwright_proxy
+
+        context = await browser.new_context(**context_options)
+
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
+            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+            window.chrome = {runtime: {}};
+            const _query = window.navigator.permissions.query.bind(window.navigator.permissions);
+            window.navigator.permissions.query = function(params) {
+                if (params.name === 'notifications')
+                    return Promise.resolve({state: Notification.permission});
+                return _query(params);
+            };
+        """)
+
+        return browser, context, pw
+    except Exception as e:
+        get_logger().error(f'Playwright 浏览器启动失败: {e}')
+        return None, None, None
+
+
+async def fetch_page_html(url, *, proxy=None, timeout=30000, wait_until="networkidle",
+                          user_agent=None, headers=None):
+    """
+    使用 Playwright 抓取单个页面 HTML
+
+    :param str url: 目标 URL
+    :param proxy: 代理配置
+    :param int timeout: 超时时间（毫秒）
+    :param str wait_until: 等待策略 (load/domcontentloaded/networkidle)
+    :param user_agent: User-Agent
+    :param dict headers: 额外请求头
+    :return: HTML 字符串，失败返回 None
+    """
+    browser = None
+    pw = None
+    try:
+        browser, context, pw = await new_browser_context(proxy=proxy, user_agent=user_agent)
+        if not browser:
+            return None
+
+        page = await context.new_page()
+        if headers:
+            await page.set_extra_http_headers(headers)
+
+        await page.goto(url, timeout=timeout, wait_until=wait_until)
+        html = await page.content()
+        return html
+    except Exception as e:
+        get_logger().error(f'Playwright 页面抓取失败: {url} - {e}')
+        return None
+    finally:
+        if browser:
+            await browser.close()
+        if pw:
+            await pw.stop()

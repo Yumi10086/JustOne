@@ -19,6 +19,7 @@ collect_config = {
     'enable_search': True,
     'enable_certificate': True,
     'enable_dataset': True,
+    'enable_intelligence': True,
 }
 
 
@@ -49,6 +50,7 @@ class Collect:
         self.enable_search = self.config.get('enable_search', collect_config.get('enable_search', True))
         self.enable_certificate = self.config.get('enable_certificate', collect_config.get('enable_certificate', True))
         self.enable_dataset = self.config.get('enable_dataset', collect_config.get('enable_dataset', True))
+        self.enable_intelligence = self.config.get('enable_intelligence', collect_config.get('enable_intelligence', True))
 
         self.domain_obj = Domain(domain)
         self.registered_domain = self.domain_obj.registered()
@@ -67,6 +69,8 @@ class Collect:
         self.search_modules: List[Any] = []
         self.certificate_modules: List[Any] = []
         self.dataset_modules: List[Any] = []
+        self.dnsquery_modules: List[Any] = []
+        self.intelligence_modules: List[Any] = []
 
         self._init_modules()
 
@@ -76,6 +80,8 @@ class Collect:
         self._init_search_modules()
         self._init_certificate_modules()
         self._init_dataset_modules()
+        self._init_dnsquery_modules()
+        self._init_intelligence_modules()
 
     def _init_search_modules(self):
         """初始化搜索引擎模块"""
@@ -85,7 +91,8 @@ class Collect:
         try:
             from modules.search import (
                 BaiduSearch, BingSearch, FoFa, Hunter, ShodanAPI,
-                ZoomEyeAPI, GithubAPI, GoogleAPI, Yahoo, Yandex,
+                ZoomEyeAPI, GithubAPI, Google, Yahoo, Yandex,
+                SoSearch, SogouSearch,
             )
             self.search_modules = [
                 BaiduSearch(self.registered_domain, self.config),
@@ -95,9 +102,11 @@ class Collect:
                 ShodanAPI(self.registered_domain, self.config),
                 ZoomEyeAPI(self.registered_domain, self.config),
                 GithubAPI(self.registered_domain, self.config),
-                GoogleAPI(self.registered_domain, self.config),
+                Google(self.registered_domain, self.config),
                 Yahoo(self.registered_domain, self.config),
                 Yandex(self.registered_domain, self.config),
+                SoSearch(self.registered_domain, self.config),
+                SogouSearch(self.registered_domain, self.config),
             ]
             logger.debug(f'已加载 {len(self.search_modules)} 个搜索引擎模块')
         except ImportError as e:
@@ -109,9 +118,11 @@ class Collect:
             return
 
         try:
-            from modules.certificates import Crtsh
+            from modules.certificates import Crtsh, CertSpotter, Censys
             self.certificate_modules = [
                 Crtsh(self.registered_domain, self.config),
+                CertSpotter(self.registered_domain, self.config),
+                Censys(self.registered_domain, self.config),
             ]
             logger.debug(f'已加载 {len(self.certificate_modules)} 个证书查询模块')
         except ImportError as e:
@@ -123,13 +134,69 @@ class Collect:
             return
 
         try:
-            from modules.datasets import LeakIX
+            from modules.datasets import (
+                LeakIX, Anubis, ChinazAPI,
+                Chinaz, CirclAPI, CloudFlareAPI, DNSDumpster,
+                FullHuntAPI, HackerTarget, IP138, NetCraft,
+                PassiveDnsAPI, RapidDNS, Robtex,
+                SecurityTrailsAPI,
+            )
             self.dataset_modules = [
                 LeakIX(self.registered_domain, self.config),
+                Anubis(self.registered_domain, self.config),
+                ChinazAPI(self.registered_domain, self.config),
+                Chinaz(self.registered_domain, self.config),
+                CirclAPI(self.registered_domain, self.config),
+                CloudFlareAPI(self.registered_domain, self.config),
+                DNSDumpster(self.registered_domain, self.config),
+                FullHuntAPI(self.registered_domain, self.config),
+                HackerTarget(self.registered_domain, self.config),
+                IP138(self.registered_domain, self.config),
+                NetCraft(self.registered_domain, self.config),
+                PassiveDnsAPI(self.registered_domain, self.config),
+                RapidDNS(self.registered_domain, self.config),
+                Robtex(self.registered_domain, self.config),
+                SecurityTrailsAPI(self.registered_domain, self.config),
             ]
             logger.debug(f'已加载 {len(self.dataset_modules)} 个数据集查询模块')
         except ImportError as e:
             logger.warning(f'导入数据集模块失败: {e}')
+
+    def _init_dnsquery_modules(self):
+        """初始化 DNS 查询模块"""
+        try:
+            from modules.dnsquery import MXQuery, QueryNS, QuerySOA, QuerySPF, QueryTXT
+            self.dnsquery_modules = [
+                MXQuery(self.registered_domain, self.config),
+                QueryNS(self.registered_domain, self.config),
+                QuerySOA(self.registered_domain, self.config),
+                QuerySPF(self.registered_domain, self.config),
+                QueryTXT(self.registered_domain, self.config),
+            ]
+            logger.debug(f'已加载 {len(self.dnsquery_modules)} 个 DNS 查询模块')
+        except ImportError as e:
+            logger.warning(f'导入 DNS 查询模块失败: {e}')
+
+    def _init_intelligence_modules(self):
+        """初始化威胁情报模块"""
+        if not self.enable_intelligence:
+            return
+
+        try:
+            from modules.intelligence import (
+                AlienVaultOTX, URLScan, ThreatBook,
+                VirusTotalAPI, ThreatMiner,
+            )
+            self.intelligence_modules = [
+                AlienVaultOTX(self.registered_domain, self.config),
+                URLScan(self.registered_domain, self.config),
+                ThreatBook(self.registered_domain, self.config),
+                VirusTotalAPI(self.registered_domain, self.config),
+                ThreatMiner(self.registered_domain, self.config),
+            ]
+            logger.debug(f'已加载 {len(self.intelligence_modules)} 个威胁情报模块')
+        except ImportError as e:
+            logger.warning(f'导入威胁情报模块失败: {e}')
 
     def run(self) -> List[str]:
         """
@@ -143,6 +210,8 @@ class Collect:
         self._run_search_modules()
         self._run_certificate_modules()
         self._run_dataset_modules()
+        self._run_dnsquery_modules()
+        self._run_intelligence_modules()
 
         self.end_time = time.time()
         self.elapse = round(self.end_time - self.start_time, 1)
@@ -228,6 +297,30 @@ class Collect:
             module_name = getattr(module, 'module', 'dataset')
             self.add_subdomains(subdomains, module_name)
 
+    def _run_dnsquery_modules(self):
+        """执行 DNS 查询模块收集"""
+        if not self.dnsquery_modules:
+            logger.debug('未配置 DNS 查询模块')
+            return
+
+        logger.info(f'开始执行 DNS 查询模块，共 {len(self.dnsquery_modules)} 个')
+        for module in self.dnsquery_modules:
+            subdomains = self._run_module(module)
+            module_name = getattr(module, 'module', 'dnsquery')
+            self.add_subdomains(subdomains, module_name)
+
+    def _run_intelligence_modules(self):
+        """执行威胁情报模块收集"""
+        if not self.intelligence_modules:
+            logger.debug('未配置威胁情报模块')
+            return
+
+        logger.info(f'开始执行威胁情报模块，共 {len(self.intelligence_modules)} 个')
+        for module in self.intelligence_modules:
+            subdomains = self._run_module(module)
+            module_name = getattr(module, 'module', 'intelligence')
+            self.add_subdomains(subdomains, module_name)
+
     def add_subdomains(self, subdomains: Set[str], module_name: str = 'unknown'):
         """
         添加子域名
@@ -293,6 +386,8 @@ class Collect:
                 'search': len(self.search_modules),
                 'certificate': len(self.certificate_modules),
                 'dataset': len(self.dataset_modules),
+                'dnsquery': len(self.dnsquery_modules),
+                'intelligence': len(self.intelligence_modules),
             },
             'modules_results': {name: len(subs) for name, subs in self.modules_results.items()},
             'elapse': self.elapse,

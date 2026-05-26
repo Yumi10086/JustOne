@@ -193,6 +193,7 @@ def main(
 def check(
     target: Optional[str] = typer.Argument(None, help="目标域名"),
     dns_only: bool = typer.Option(False, "--dns", help="仅执行 DNS 检查"),
+    cdn_check: bool = typer.Option(False, "--cdn", help="执行 CDN 识别"),
     input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="子域名列表文件（每行一个子域名）"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径"),
     format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
@@ -207,6 +208,8 @@ def check(
     """
     from modules.check import DNSCheck, HTTPCheck
     from modules.check.http import AsyncHTTPCheck
+    from modules.check import CertInfo, Robots, Sitemap, CrossDomain, AXFR, NSEC
+    from modules.check.cdn import CDNCheck
     from modules.export import export_results, export_subdomains
 
     init_logging()
@@ -228,24 +231,52 @@ def check(
         domain_obj = Domain(target)
         main_domain = domain_obj.registered()
         console.print(f"[bold cyan]检查子域名: {main_domain}[/bold cyan]")
+
+        discovery_modules = [
+            (CertInfo(main_domain), 'SSL证书'),
+            (Robots(main_domain), 'robots.txt'),
+            (Sitemap(main_domain), 'sitemap'),
+            (CrossDomain(main_domain), 'crossdomain.xml'),
+            (AXFR(main_domain), 'DNS域传送'),
+            (NSEC(main_domain), 'DNSSEC'),
+        ]
+        console.print("[cyan]执行域名级检查发现子域名...[/cyan]")
+        for mod, label in discovery_modules:
+            try:
+                result = mod.run()
+                if result:
+                    subdomains.update(result)
+                    console.print(f"  [dim]{label}: 发现 {len(result)} 个[/dim]")
+            except Exception as e:
+                console.print(f"  [dim]{label}: 跳过 ({e})[/dim]")
+        if subdomains:
+            console.print(f"[cyan]共发现 {len(subdomains)} 个候选子域名[/cyan]")
     else:
         console.print("[bold red]错误: 请指定目标域名或使用 -i 指定输入文件[/bold red]")
         raise typer.Exit(1)
 
     if dns_only:
         checker = DNSCheck(main_domain or "unknown")
+        results = checker.run(subdomains, show_progress=True)
     else:
         checker = AsyncHTTPCheck(main_domain or "unknown", concurrent=100)
-
-    results = checker.run(subdomains, show_progress=True)
+        results = checker.run(subdomains, show_progress=True)
     console.print(f"发现 {len(results)} 个存活的子域名")
+
+    if cdn_check and results:
+        alive_subdomains = {r['subdomain'] for r in results}
+        console.print("[cyan]执行 CDN 识别...[/cyan]")
+        cdn = CDNCheck(main_domain or "unknown")
+        cdn_results = cdn.run(alive_subdomains)
+        cdn_count = sum(1 for r in cdn_results if r['cdn'])
+        console.print(f"[cyan]CDN 识别完成: {cdn_count}/{len(cdn_results)} 使用 CDN[/cyan]")
+        for r in cdn_results:
+            if r['cdn']:
+                console.print(f"  [dim]{r['subdomain']}: CDN ({r.get('cdn_provider', 'unknown')})[/dim]")
 
     if results:
         if not output:
-            if main_domain and main_domain != 'unknown':
-                output = get_default_output(main_domain, 'check', format)
-            else:
-                output = get_default_output('result', 'check', format)
+            output = get_default_output('result', 'check', format)
         if format == 'txt':
             output.parent.mkdir(parents=True, exist_ok=True)
             with open(output, 'w', encoding='utf-8') as f:

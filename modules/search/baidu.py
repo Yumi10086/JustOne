@@ -92,6 +92,11 @@ class BaiduSearch(Module):
 
         logger.info(f'开始百度搜索收集子域名: {query}')
 
+        # 首次搜索前随机延迟，模拟人工操作
+        initial_delay = random.uniform(2, 4)
+        logger.debug(f'首次搜索前等待 {initial_delay:.1f}s...')
+        time.sleep(initial_delay)
+
         for page in range(page_count):
             try:
                 url = 'https://www.baidu.com/s'

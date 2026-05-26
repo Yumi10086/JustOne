@@ -59,6 +59,7 @@ class Module(object):
         self.end = None
         self.elapse = None
 
+        self.request_retries = 2
         self._session = None
 
     def have_api(self, *apis):
@@ -146,14 +147,7 @@ class Module(object):
         if ignore:
             level = 'DEBUG'
         try:
-            resp = session.get(url,
-                               params=params,
-                               cookies=self.cookie,
-                               headers=self.header,
-                               proxies=self.proxy,
-                               timeout=self.timeout,
-                               verify=self.verify,
-                               **kwargs)
+            resp = self._do_get(session, url, params, **kwargs)
         except Exception as e:
             if raise_error:
                 if isinstance(e, requests.exceptions.ConnectTimeout):
@@ -167,6 +161,38 @@ class Module(object):
             return resp
         return None
 
+    def _do_get(self, session, url, params, **kwargs):
+        """
+        执行 GET 请求，默认直连，失败自动尝试代理
+
+        重试策略：直连 → 代理（最多 request_retries 次）
+        """
+        last_error = None
+
+        for attempt in range(self.request_retries):
+            proxies = self.proxy if attempt == 1 else None
+
+            try:
+                return session.get(url, params=params, cookies=self.cookie,
+                                   headers=self.header, proxies=proxies,
+                                   timeout=self.timeout, verify=self.verify, **kwargs)
+            except (requests.exceptions.ProxyError,
+                    requests.exceptions.SSLError,
+                    requests.exceptions.ConnectionError) as e:
+                last_error = e
+                if attempt == 0 and self.proxy:
+                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                    continue
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt == 0 and self.proxy:
+                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                    continue
+                raise
+
+        raise last_error
+
     def post(self, url, data=None, check=True, **kwargs):
         """
         发送 POST 请求
@@ -179,14 +205,7 @@ class Module(object):
         """
         session = self._get_session()
         try:
-            resp = session.post(url,
-                                data=data,
-                                cookies=self.cookie,
-                                headers=self.header,
-                                proxies=self.proxy,
-                                timeout=self.timeout,
-                                verify=self.verify,
-                                **kwargs)
+            resp = self._do_post(session, url, data, **kwargs)
         except Exception as e:
             logger.error(e.args[0])
             return None
@@ -195,6 +214,36 @@ class Module(object):
         if utils.check_response('POST', resp):
             return resp
         return None
+
+    def _do_post(self, session, url, data, **kwargs):
+        """
+        执行 POST 请求，默认直连，失败自动尝试代理
+        """
+        last_error = None
+
+        for attempt in range(self.request_retries):
+            proxies = self.proxy if attempt == 1 else None
+
+            try:
+                return session.post(url, data=data, cookies=self.cookie,
+                                    headers=self.header, proxies=proxies,
+                                    timeout=self.timeout, verify=self.verify, **kwargs)
+            except (requests.exceptions.ProxyError,
+                    requests.exceptions.SSLError,
+                    requests.exceptions.ConnectionError) as e:
+                last_error = e
+                if attempt == 0 and self.proxy:
+                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                    continue
+                raise
+            except Exception as e:
+                last_error = e
+                if attempt == 0 and self.proxy:
+                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                    continue
+                raise
+
+        raise last_error
 
     def delete(self, url, check=True, **kwargs):
         """
@@ -276,6 +325,27 @@ class Module(object):
         subdomains = self.match_subdomains(resp)
         self.subdomains.update(subdomains)
         return self.subdomains
+
+    def to_check(self, filenames):
+        """
+        检查站点根目录下指定文件，从中匹配子域名
+
+        :param set filenames: 要检查的文件名集合（如 {'crossdomain.xml', 'robots.txt'}）
+        """
+        urls = []
+        for filename in filenames:
+            urls.append(f'http://{self.domain}/{filename}')
+            urls.append(f'https://{self.domain}/{filename}')
+        for url in urls:
+            try:
+                self.get_header()
+                self.proxy = self.get_proxy(self.source)
+                resp = self.get(url, check=False, ignore=True, raise_error=True)
+                if not resp:
+                    continue
+                self.collect_subdomains(resp)
+            except Exception:
+                pass
 
     def save_json(self):
         """

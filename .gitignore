@@ -168,3 +168,4 @@ docker-compose.override.yml
 DevLog/
 tests/
 .skill/
+.omo

@@ -1,18 +1,20 @@
 """
-Google 搜索模块
+Google Web 搜索模块（Playwright 异步）
 """
 
+import asyncio
 import random
-import time
 from typing import Optional, Set
+from urllib.parse import urlencode
 
 from common.search import Search
+from common.utils import new_browser_context
 from config.logging import logger
 
 
 class Google(Search):
     """
-    Google 搜索引擎子域收集模块
+    Google Web 搜索引擎子域收集模块
     """
 
     def __init__(self, domain: str, config: Optional[dict] = None):
@@ -21,78 +23,138 @@ class Google(Search):
         :param dict config: 可选配置字典
         """
         super().__init__(domain, config)
-        self.module = 'Google'
-        self.source = 'google.com'
+        self.module = 'GoogleWeb'
+        self.source = 'google.com/web'
         self.init = 'https://www.google.com/'
         self.addr = 'https://www.google.com/search'
 
-    def _is_blocked(self, resp) -> bool:
+    def _is_blocked(self, html: str) -> bool:
         """检测反爬虫拦截"""
-        if not resp or not resp.text:
+        if not html:
             return True
-        if resp.status_code in (302, 301, 403, 429):
-            logger.warning(f'Google 请求被拦截，状态码: {resp.status_code}')
-            return True
-        text_lower = resp.text.lower()
-        blocked = ['captcha', 'unusual traffic', 'sorry',
-                   'automated queries', "i'm not a robot",
-                   'verify you are human']
-        for kw in blocked:
+        text_lower = html.lower()
+        blocked_kw = ['captcha', 'unusual traffic', 'sorry',
+                      'automated queries', "i'm not a robot",
+                      'verify you are human', "please show you're not a robot",
+                      'our systems have detected unusual traffic',
+                      'your client does not have permission']
+        for kw in blocked_kw:
             if kw in text_lower:
-                logger.warning(f'Google 返回拦截页面（关键词: {kw}）')
+                logger.warning(f'Google Web 返回拦截页面（关键词: {kw}）')
                 return True
         return False
 
-    def search(self, domain: str, filtered_subdomain: str = ''):
-        """
-        发送搜索请求并做子域匹配
+    async def _handle_consent(self, page):
+        """处理 Google 同意弹窗"""
+        try:
+            await page.wait_for_load_state('networkidle', timeout=10000)
+        except Exception:
+            pass
 
-        :param str domain: 域名
-        :param str filtered_subdomain: 过滤的子域
+        consent_selectors = [
+            'button:has-text("Accept all")',
+            'button:has-text("I agree")',
+            'button:has-text("同意")',
+            'button:has-text("Accept")',
+            '#L2AGLb',
+            'form[action*="consent"] button',
+        ]
+        for selector in consent_selectors:
+            try:
+                button = await page.wait_for_selector(selector, timeout=3000)
+                if button:
+                    await button.click()
+                    await asyncio.sleep(random.uniform(1, 2))
+                    break
+            except Exception:
+                continue
+
+    async def _search_pages(self, page, word: str):
         """
-        page_num = 1
+        对指定搜索词进行分页搜索
+
+        :param page: Playwright Page 实例
+        :param str word: 搜索关键词
+        """
+        page_num = 0
         per_page_num = 50
-        self.get_header()
-        self.header.update({'Referer': 'https://www.google.com'})
-        self.proxy = self.get_proxy(self.source)
-        resp = self.get(self.init)
-        if not resp or self._is_blocked(resp):
-            return
-        self.cookie = resp.cookies
+
         while True:
-            self.delay = random.randint(2, 6)
-            time.sleep(self.delay)
-            self.proxy = self.get_proxy(self.source)
-            word = 'site:' + domain + filtered_subdomain
-            payload = {'q': word, 'start': page_num, 'num': per_page_num,
-                       'filter': '0', 'btnG': 'Search', 'gbv': '1', 'hl': 'en'}
-            resp = self.get(url=self.addr, params=payload)
-            if self._is_blocked(resp):
+            await asyncio.sleep(random.uniform(3, 7))
+            params = {'q': word, 'start': page_num, 'num': per_page_num,
+                      'filter': '0', 'hl': 'en'}
+            search_url = f'{self.addr}?{urlencode(params)}'
+
+            try:
+                await page.goto(search_url, timeout=30000, wait_until='domcontentloaded')
+            except Exception as e:
+                logger.warning(f'Google Web 搜索请求失败: {e}')
                 break
-            subdomains = self.match_subdomains(resp, fuzzy=True)
+
+            try:
+                await page.wait_for_selector('#search, #res, #rso', timeout=10000)
+            except Exception:
+                pass
+
+            html = await page.content()
+
+            if self._is_blocked(html):
+                break
+
+            subdomains = self.match_subdomains(html, fuzzy=True)
             subdomains = {s for s in subdomains
                           if not s.lower().startswith('2f')
                           and not s.lower().startswith('%2f')}
+
             if not self.check_subdomains(subdomains):
                 break
+
             self.subdomains.update(subdomains)
             page_num += per_page_num
-            if 'start=' + str(page_num) not in resp.text:
+
+            if f'start={page_num}' not in html:
                 break
-            if '302 Moved' in resp.text:
+            if '302 Moved' in html:
                 break
+
+    async def _search_all(self):
+        """异步搜索入口，管理浏览器生命周期"""
+        self.get_header()
+        self.proxy = self.get_proxy(self.source)
+
+        browser, context, pw = await new_browser_context(
+            proxy=self.proxy,
+            user_agent=self.header.get('User-Agent'),
+        )
+        if not browser:
+            return
+
+        try:
+            page = await context.new_page()
+
+            try:
+                resp = await page.goto(self.init, timeout=30000, wait_until='domcontentloaded')
+                if resp and resp.status == 200:
+                    await self._handle_consent(page)
+            except Exception as e:
+                logger.warning(f'Google Web 首页访问失败: {e}')
+
+            await self._search_pages(page, f'site:{self.domain}')
+
+            for statement in self.filter(self.domain, self.subdomains):
+                await self._search_pages(page, f'site:{self.domain} -{statement}')
+
+            if self.recursive:
+                for subdomain in self.recursive_subdomain():
+                    await self._search_pages(page, f'site:{subdomain}')
+        finally:
+            await browser.close()
+            await pw.stop()
 
     def run(self) -> Set[str]:
-        """执行 Google 搜索"""
+        """执行 Google Web 搜索"""
         self.begin()
-        self.search(self.domain)
-
-        for statement in self.filter(self.domain, self.subdomains):
-            self.search(self.domain, filtered_subdomain=statement)
-
-        if self.recursive:
-            for subdomain in self.recursive_subdomain():
-                self.search(subdomain)
+        asyncio.run(self._search_all())
         self.finish()
         self.save_json()
         self.gen_result()

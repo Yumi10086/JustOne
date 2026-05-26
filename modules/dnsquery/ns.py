@@ -1,0 +1,50 @@
+"""
+NS 记录查询模块
+"""
+
+from typing import Optional, Set
+
+from common.module import Module
+from common import utils
+from config.logging import logger
+
+
+class QueryNS(Module):
+    """
+    NS 记录查询模块
+
+    利用 DNS 的 NS 记录收集子域名
+    """
+
+    def __init__(self, domain: str, config: Optional[dict] = None):
+        """
+        初始化 NS 查询模块
+
+        :param str domain: 目标域名
+        :param dict config: 可选配置字典
+        """
+        super().__init__(domain, config)
+        self.module = 'QueryNS'
+        self.source = 'QueryNS'
+
+    def run(self) -> Set[str]:
+        """
+        执行 NS 记录查询
+
+        :return: 发现的子域名集合
+        """
+        self.begin()
+
+        try:
+            answer = utils.dns_query(self.domain, 'NS')
+            if answer:
+                for rr in answer:
+                    ns_str = str(rr).strip('.')
+                    if ns_str.endswith(self.domain):
+                        self.subdomains.add(ns_str.lower())
+            logger.info(f'NS 查询完成，发现 {len(self.subdomains)} 个子域名')
+        except Exception as e:
+            logger.error(f'NS 查询出错: {e}')
+
+        self.finish()
+        return self.subdomains
