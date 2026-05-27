@@ -83,7 +83,7 @@ class TestFingerprints(unittest.TestCase):
         self.assertIsNone(result)
 
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
 from modules.takeover.takeover import TakeoverResult, TakeoverCheck
 
 
@@ -213,6 +213,207 @@ class TestTakeoverCheckSubdomain(unittest.TestCase):
         results = asyncio.run(check.run({'test.example.com'}))
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].status, 'vulnerable')
+
+
+import aiohttp
+
+
+class TestTakeoverHTTP(unittest.TestCase):
+    """HTTP 指纹检查和判定逻辑测试"""
+
+    def setUp(self):
+        self.check = TakeoverCheck('example.com')
+
+    def test_fingerprint_match_body_success(self):
+        http_check = {
+            'fingerprints': [
+                {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True}
+            ],
+            'status_codes': [404],
+        }
+        resp = {'status_code': 404, 'body': 'The specified bucket does not exist NoSuchBucket', 'headers': {}}
+        status_match, matched, missed = self.check._check_fingerprint_match(http_check, resp)
+        self.assertTrue(status_match)
+        self.assertIn('NoSuchBucket', matched)
+
+    def test_fingerprint_match_body_fail(self):
+        http_check = {
+            'fingerprints': [
+                {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True}
+            ],
+            'status_codes': [404],
+        }
+        resp = {'status_code': 404, 'body': 'Welcome to nginx', 'headers': {}}
+        status_match, matched, missed = self.check._check_fingerprint_match(http_check, resp)
+        self.assertTrue(status_match)
+        self.assertNotIn('NoSuchBucket', matched)
+
+    def test_fingerprint_status_mismatch(self):
+        http_check = {
+            'fingerprints': [
+                {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True}
+            ],
+            'status_codes': [404],
+        }
+        resp = {'status_code': 200, 'body': 'NoSuchBucket', 'headers': {}}
+        status_match, matched, missed = self.check._check_fingerprint_match(http_check, resp)
+        self.assertFalse(status_match)
+
+    def test_judge_vulnerable_all_required_match(self):
+        fp = {
+            'http_check': {
+                'fingerprints': [
+                    {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True}
+                ],
+            }
+        }
+        status = self.check._judge(fp, True, ['NoSuchBucket'], [])
+        self.assertEqual(status, 'vulnerable')
+
+    def test_judge_likely_required_miss(self):
+        fp = {
+            'http_check': {
+                'fingerprints': [
+                    {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True}
+                ],
+            }
+        }
+        status = self.check._judge(fp, True, [], ['NoSuchBucket'])
+        self.assertEqual(status, 'likely')
+
+    def test_judge_likely_no_required_with_match(self):
+        fp = {
+            'http_check': {
+                'fingerprints': [
+                    {'type': 'body', 'pattern': 'something', 'required': False}
+                ],
+            }
+        }
+        status = self.check._judge(fp, True, ['something'], [])
+        self.assertEqual(status, 'likely')
+
+    def test_judge_not_vulnerable_status_mismatch(self):
+        fp = {
+            'http_check': {
+                'fingerprints': [
+                    {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True}
+                ],
+            }
+        }
+        status = self.check._judge(fp, False, [], [])
+        self.assertEqual(status, 'not_vulnerable')
+
+    def test_judge_required_multiple_all_match(self):
+        fp = {
+            'http_check': {
+                'fingerprints': [
+                    {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True},
+                    {'type': 'header', 'pattern': 'x-amz-request-id', 'required': True},
+                ],
+            }
+        }
+        status = self.check._judge(fp, True, ['NoSuchBucket', 'x-amz-request-id'], [])
+        self.assertEqual(status, 'vulnerable')
+
+    def test_judge_required_multiple_partial_match(self):
+        fp = {
+            'http_check': {
+                'fingerprints': [
+                    {'type': 'body', 'pattern': 'NoSuchBucket', 'required': True},
+                    {'type': 'header', 'pattern': 'x-amz-request-id', 'required': True},
+                ],
+            }
+        }
+        status = self.check._judge(fp, True, ['NoSuchBucket'], ['x-amz-request-id'])
+        self.assertEqual(status, 'likely')
+
+
+class TestTakeoverHTTPIntegration(unittest.TestCase):
+    """HTTP 确认全链路测试（mock）"""
+
+    @patch('modules.takeover.takeover.TakeoverCheck._resolve_cname')
+    @patch('modules.takeover.takeover.TakeoverCheck._check_http')
+    def test_vulnerable_full_flow(self, mock_http, mock_resolve):
+        mock_resolve.return_value = ('test.github.io', 'NOERROR')
+        mock_http.return_value = {
+            'http_path': '/', 'http_status': 404,
+            'matched_fingerprints': ["There isn't a GitHub Pages site here"],
+            'missed_fingerprints': [],
+            'judgment': 'vulnerable', 'http_error': None,
+        }
+        check = TakeoverCheck('example.com')
+        result = check.check_subdomain('test.example.com')
+        self.assertEqual(result.status, 'vulnerable')
+        self.assertEqual(result.service, 'github-pages')
+        self.assertEqual(result.severity, 'high')
+
+    @patch('modules.takeover.takeover.TakeoverCheck._resolve_cname')
+    @patch('modules.takeover.takeover.TakeoverCheck._check_http')
+    def test_likely_flow(self, mock_http, mock_resolve):
+        mock_resolve.return_value = ('test.github.io', 'NOERROR')
+        mock_http.return_value = {
+            'http_path': '/', 'http_status': 404,
+            'matched_fingerprints': [],
+            'missed_fingerprints': ["There isn't a GitHub Pages site here"],
+            'judgment': 'likely', 'http_error': None,
+        }
+        check = TakeoverCheck('example.com')
+        result = check.check_subdomain('test.example.com')
+        self.assertEqual(result.status, 'likely')
+
+    @patch('modules.takeover.takeover.TakeoverCheck._resolve_cname')
+    @patch('modules.takeover.takeover.TakeoverCheck._check_http')
+    def test_not_vulnerable_flow(self, mock_http, mock_resolve):
+        mock_resolve.return_value = ('test.github.io', 'NOERROR')
+        mock_http.return_value = {
+            'http_path': '/', 'http_status': 200,
+            'matched_fingerprints': [],
+            'missed_fingerprints': [],
+            'judgment': 'not_vulnerable', 'http_error': None,
+        }
+        check = TakeoverCheck('example.com')
+        result = check.check_subdomain('test.example.com')
+        self.assertEqual(result.status, 'not_vulnerable')
+
+    @patch('modules.takeover.takeover.TakeoverCheck._resolve_cname')
+    @patch('modules.takeover.takeover.TakeoverCheck._check_http')
+    def test_unknown_flow(self, mock_http, mock_resolve):
+        mock_resolve.return_value = ('test.github.io', 'NOERROR')
+        mock_http.return_value = {
+            'http_path': '/', 'http_status': 0,
+            'matched_fingerprints': [],
+            'missed_fingerprints': [],
+            'judgment': 'unknown', 'http_error': 'timeout',
+        }
+        check = TakeoverCheck('example.com')
+        result = check.check_subdomain('test.example.com')
+        self.assertEqual(result.status, 'unknown')
+
+    def test_takeover_run_output_format(self):
+        """验证 takeover_run 返回正确的字典格式"""
+        import asyncio
+        from modules.takeover import takeover_run
+        with patch.object(TakeoverCheck, 'run', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = [
+                TakeoverResult(
+                    subdomain='test.example.com', cname='test.github.io.',
+                    service='github-pages', severity='high',
+                    status='vulnerable', detail={'http_status': 404}
+                )
+            ]
+            results = takeover_run('example.com', {'test.example.com'})
+            self.assertIsInstance(results, list)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]['status'], 'vulnerable')
+            self.assertIn('subdomain', results[0])
+            self.assertIn('cname', results[0])
+            self.assertIn('service', results[0])
+            self.assertIn('severity', results[0])
+            self.assertIn('status', results[0])
+            self.assertIn('detail', results[0])
+        # 清理 takeover_run 关闭的事件循环，避免影响后续测试
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
 
 if __name__ == '__main__':

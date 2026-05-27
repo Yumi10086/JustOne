@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Optional, Set, List, Tuple
 
+import aiohttp
 import dns.resolver
 
 from modules.takeover.fingerprints import load_fingerprints, find_matching_fingerprint
@@ -151,22 +152,148 @@ class TakeoverCheck:
         http_result = loop.run_until_complete(self._apply_http_check(result, fp))
         return http_result
 
+    @staticmethod
+    async def _check_http_path(
+        session: aiohttp.ClientSession, subdomain: str, path: str
+    ) -> dict:
+        """
+        检查单一路径的 HTTP 响应
+
+        :param session: aiohttp 会话
+        :param subdomain: 子域名
+        :param path: URL 路径
+        :return: 含状态码/响应体/头部/错误的字典
+        """
+        url = f'https://{subdomain}{path}'
+        try:
+            async with session.get(
+                url,
+                ssl=False,
+                timeout=aiohttp.ClientTimeout(total=10),
+                allow_redirects=True,
+            ) as resp:
+                body = await resp.text()
+                return {
+                    'status_code': resp.status,
+                    'body': body,
+                    'headers': dict(resp.headers),
+                    'error': None,
+                }
+        except asyncio.TimeoutError:
+            return {'status_code': 0, 'body': '', 'headers': {}, 'error': 'timeout'}
+        except Exception as e:
+            return {'status_code': 0, 'body': '', 'headers': {}, 'error': str(e)}
+
+    @staticmethod
+    def _check_fingerprint_match(http_check: dict, resp: dict) -> tuple:
+        """
+        检查 HTTP 响应是否匹配指纹模式
+
+        :param http_check: http_check 配置字典
+        :param resp: HTTP 响应字典
+        :return: (status_match, matched, missed)
+        """
+        expected_codes = http_check.get('status_codes', [200])
+        status_match = resp['status_code'] in expected_codes
+
+        fingerprints = http_check.get('fingerprints', [])
+        matched = []
+        missed = []
+
+        for f in fingerprints:
+            pattern = f['pattern']
+            if f['type'] == 'body':
+                if pattern in resp.get('body', ''):
+                    matched.append(pattern)
+                else:
+                    missed.append(pattern)
+            elif f['type'] == 'header':
+                header_val = next(
+                    (v for k, v in resp.get('headers', {}).items()
+                     if k.lower() == pattern.lower()),
+                    None
+                )
+                if header_val:
+                    matched.append(pattern)
+                else:
+                    missed.append(pattern)
+
+        return (status_match, matched, missed)
+
+    @staticmethod
+    def _judge(fp: dict, status_match: bool, matched: list, missed: list) -> str:
+        """
+        判定风险等级
+
+        :param fp: 指纹字典
+        :param status_match: HTTP 状态码是否匹配
+        :param matched: 匹配的指纹列表
+        :param missed: 未匹配的指纹列表
+        :return: vulnerable / likely / not_vulnerable
+        """
+        if not status_match:
+            return 'not_vulnerable'
+
+        fingerprints = fp.get('http_check', {}).get('fingerprints', [])
+        required = [f for f in fingerprints if f.get('required', False)]
+        required_patterns = {f['pattern'] for f in required}
+
+        if required_patterns:
+            if required_patterns.issubset(set(matched)):
+                return 'vulnerable'
+            return 'likely'
+
+        if matched:
+            return 'likely'
+        return 'likely'
+
     async def _check_http(self, subdomain: str, fp: dict) -> dict:
         """
-        HTTP 确认接口（由后续 Task 4 实现完整逻辑，当前返回 unknown）
+        对所有 paths 并行 HTTP 检查，取最高风险
 
         :param subdomain: 子域名
         :param fp: 指纹字典
         :return: 包含 judgment 字段的结果字典
         """
-        return {
-            'judgment': 'unknown',
-            'http_status': 0,
-            'http_path': '/',
-            'matched_fingerprints': [],
-            'missed_fingerprints': [],
-            'http_error': 'not implemented',
-        }
+        http_check = fp.get('http_check', {})
+        paths = http_check.get('paths', ['/'])
+
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            tasks = [self._check_http_path(session, subdomain, p) for p in paths]
+            responses = await asyncio.gather(*tasks)
+
+        best = None
+        best_risk = 99
+        for i, resp in enumerate(responses):
+            if resp.get('error'):
+                continue
+            status_match, matched, missed = self._check_fingerprint_match(http_check, resp)
+            status = self._judge(fp, status_match, matched, missed)
+            risk = RISK_ORDER.get(status, 99)
+            if risk < best_risk:
+                best_risk = risk
+                best = {
+                    'http_path': paths[i],
+                    'http_status': resp['status_code'],
+                    'matched_fingerprints': matched,
+                    'missed_fingerprints': missed,
+                    'judgment': status,
+                    'http_error': None,
+                }
+
+        if best is None:
+            first_error = responses[0].get('error', 'unknown') if responses else 'unknown'
+            return {
+                'http_path': paths[0],
+                'http_status': 0,
+                'matched_fingerprints': [],
+                'missed_fingerprints': [],
+                'judgment': 'unknown',
+                'http_error': first_error,
+            }
+
+        return best
 
     async def run(self, subdomains: Set[str]) -> List[TakeoverResult]:
         """
