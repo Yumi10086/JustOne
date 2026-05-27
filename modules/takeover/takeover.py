@@ -12,6 +12,7 @@ run() 是异步批量入口。
 import asyncio
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional, Set, List, Tuple
 
 import aiohttp
@@ -48,9 +49,10 @@ class TakeoverCheck:
         """
         self.domain = domain
         self.config = config or {}
-        self.fingerprints = load_fingerprints(
-            self.config.get('fingerprint_file')
-        )
+        fp_path = self.config.get('fingerprint_file')
+        if isinstance(fp_path, str):
+            fp_path = Path(fp_path)
+        self.fingerprints = load_fingerprints(fp_path)
         self.concurrent = self.config.get('concurrent', 20)
         self.http_timeout = self.config.get('http_timeout', 10)
 
@@ -154,7 +156,8 @@ class TakeoverCheck:
 
     @staticmethod
     async def _check_http_path(
-        session: aiohttp.ClientSession, subdomain: str, path: str
+        session: aiohttp.ClientSession, subdomain: str, path: str,
+        http_timeout: int = 10
     ) -> dict:
         """
         检查单一路径的 HTTP 响应
@@ -162,14 +165,14 @@ class TakeoverCheck:
         :param session: aiohttp 会话
         :param subdomain: 子域名
         :param path: URL 路径
+        :param http_timeout: 超时秒数
         :return: 含状态码/响应体/头部/错误的字典
         """
         url = f'https://{subdomain}{path}'
         try:
             async with session.get(
                 url,
-                ssl=False,
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=http_timeout),
                 allow_redirects=True,
             ) as resp:
                 body = await resp.text()
@@ -260,7 +263,7 @@ class TakeoverCheck:
 
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
-            tasks = [self._check_http_path(session, subdomain, p) for p in paths]
+            tasks = [self._check_http_path(session, subdomain, p, self.http_timeout) for p in paths]
             responses = await asyncio.gather(*tasks)
 
         best = None
