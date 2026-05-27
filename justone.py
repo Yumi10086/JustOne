@@ -50,6 +50,7 @@ from config.settings import settings
 from modules.collect import Collect
 from modules.brute import Brute
 from modules.export import export_subdomains, export_results
+from modules.takeover import takeover_run
 from common.domain import Domain
 from common import utils
 
@@ -336,6 +337,124 @@ def brute(
             export_subdomains(sorted(subdomains), output, 'txt')
         else:
             results = [{'subdomain': s} for s in sorted(subdomains)]
+            export_results(results, output, format)
+        console.print(f"[green]结果已保存到: {output}[/green]")
+
+
+@app.command()
+def takeover(
+    target: Optional[str] = typer.Argument(None, help="目标域名"),
+    input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="子域名列表文件（每行一个子域名）"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径"),
+    format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
+    concurrent: int = typer.Option(20, "--concurrent", "-c", help="并发数"),
+    fingerprint_file: Optional[Path] = typer.Option(None, "--fingerprint-file", help="自定义接管指纹文件路径"),
+    skip_brute: bool = typer.Option(False, "--skip-brute", help="跳过爆破阶段（仅从收集模块获取子域名）"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
+):
+    """
+    检测子域名接管风险
+
+    通过 DNS CNAME + HTTP 响应指纹双重确认判断子域名是否可被接管。
+
+    示例:
+
+        python justone.py takeover example.com
+
+        python justone.py takeover -i subdomains.txt
+
+        python justone.py takeover example.com --concurrent 50
+    """
+    init_logging(debug=verbose)
+
+    subdomains: Set[str] = set()
+    main_domain: Optional[str] = None
+
+    if input_file:
+        if not input_file.exists():
+            console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
+            raise typer.Exit(1)
+        with open(input_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    subdomains.add(line)
+        console.print(f"[bold cyan]从文件加载 {len(subdomains)} 个子域名[/bold cyan]")
+    elif target:
+        domain_obj = Domain(target)
+        main_domain = domain_obj.registered()
+        if not main_domain:
+            console.print(f"[bold red]错误: 无法解析目标域名: {target}[/bold red]")
+            raise typer.Exit(1)
+        console.print(f"[bold cyan]检测子域名接管: {main_domain}[/bold cyan]")
+
+        # 先收集子域名
+        console.print("[cyan]执行信息收集...[/cyan]")
+        collect = Collect(main_domain)
+        collected = set(collect.run())
+        console.print(f"[dim]收集到 {len(collected)} 个子域名[/dim]")
+
+        # 再加爆破（除非跳过）
+        if not skip_brute:
+            console.print("[cyan]执行爆破...[/cyan]")
+            brute_module = Brute(main_domain)
+            brute_subdomains = brute_module.run()
+            console.print(f"[dim]爆破发现 {len(brute_subdomains)} 个[/dim]")
+            subdomains = collected | brute_subdomains
+        else:
+            subdomains = collected
+    else:
+        console.print("[bold red]错误: 请指定目标域名或使用 -i 指定输入文件[/bold red]")
+        raise typer.Exit(1)
+
+    if not subdomains:
+        console.print("[yellow]没有子域名需要检测[/yellow]")
+        return
+
+    console.print(f"[cyan]开始检测 {len(subdomains)} 个子域名的接管风险...[/cyan]")
+
+    config = {
+        'concurrent': concurrent,
+    }
+    if fingerprint_file:
+        config['fingerprint_file'] = str(fingerprint_file)
+
+    results = takeover_run(main_domain or 'target', subdomains, config)
+
+    # 统计
+    vulnerable = [r for r in results if r['status'] == 'vulnerable']
+    likely = [r for r in results if r['status'] == 'likely']
+    errors = [r for r in results if r['status'] == 'error']
+
+    console.print(f"\n[bold]检测完成:[/bold]")
+    console.print(f"  [bold red]可接管: {len(vulnerable)}[/bold red]")
+    console.print(f"  [bold yellow]可疑: {len(likely)}[/bold yellow]")
+    console.print(f"  [dim]安全: {len(results) - len(vulnerable) - len(likely) - len(errors)}[/dim]")
+    console.print(f"  [dim]错误: {len(errors)}[/dim]")
+
+    if vulnerable:
+        console.print(f"\n[bold red]!!! 可接管域名 !!![/bold red]")
+        for r in vulnerable:
+            console.print(f"  [red]{r['subdomain']}[/red] → {r['cname']} ({r['service']})")
+
+    if likely:
+        console.print(f"\n[bold yellow]可疑域名:[/bold yellow]")
+        for r in likely:
+            console.print(f"  [yellow]{r['subdomain']}[/yellow] → {r['cname']} ({r['service']})")
+
+    if results:
+        if not output:
+            if main_domain:
+                output = get_default_output(main_domain, 'takeover', format)
+            else:
+                output = get_default_output('result', 'takeover', format)
+        if format == 'txt':
+            export_subdomains(
+                [f"{r['subdomain']}|{r['status']}|{r.get('service', '')}|{r.get('cname', '')}"
+                 for r in results],
+                output, 'txt'
+            )
+        else:
             export_results(results, output, format)
         console.print(f"[green]结果已保存到: {output}[/green]")
 

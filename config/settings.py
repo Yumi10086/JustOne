@@ -130,6 +130,8 @@ class Settings(BaseSettings):
     fingerprint_enable: bool = True
     # 启用子域接管检查
     takeover_enable: bool = False
+    # 子域名接管检测并发数
+    takeover_concurrent: int = 20
     # 启用导出模块
     export_enable: bool = True
 
