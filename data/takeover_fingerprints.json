@@ -1,0 +1,244 @@
+{
+  "aws-s3": {
+    "name": "AWS S3",
+    "severity": "high",
+    "cname_match": "regex",
+    "cname": ["\\.s3\\.amazonaws\\.com$", "\\.s3-website[-\\.]"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "NoSuchBucket", "required": true},
+        {"type": "header", "pattern": "x-amz-request-id", "required": false}
+      ],
+      "status_codes": [404, 403]
+    }
+  },
+  "github-pages": {
+    "name": "GitHub Pages",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".github.io"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "There isn't a GitHub Pages site here", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "heroku": {
+    "name": "Heroku",
+    "severity": "high",
+    "cname_match": "regex",
+    "cname": ["\\.herokudns\\.com$", "\\.herokussl\\.com$", "\\.herokuapp\\.com$"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "No such app", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "azure-cloudapp": {
+    "name": "Azure CloudApp",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".cloudapp.net"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "was not found", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "firebase": {
+    "name": "Firebase",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".firebaseapp.com", ".web.app"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "Firebase Hosting Site Not Found", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "digitalocean-spaces": {
+    "name": "DigitalOcean Spaces",
+    "severity": "medium",
+    "cname_match": "regex",
+    "cname": ["\\.digitaloceanspaces\\.com$", "\\.fra1\\.digitaloceanspaces\\.com$"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "NoSuchBucket", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "shopify": {
+    "name": "Shopify",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".myshopify.com", ".shopify.com"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "Sorry, this shop is currently unavailable", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "wordpress-com": {
+    "name": "WordPress.com",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".wordpress.com"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "Do you want to register", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "pantheon": {
+    "name": "Pantheon",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".pantheonsite.io", ".pantheon.io"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "The gods are angry", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "readme-io": {
+    "name": "Readme.io",
+    "severity": "medium",
+    "cname_match": "suffix",
+    "cname": [".readme.io"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "Project doesn't exist", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "surge-sh": {
+    "name": "Surge.sh",
+    "severity": "medium",
+    "cname_match": "suffix",
+    "cname": [".surge.sh"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "project not found", "required": true}
+      ],
+      "status_codes": [404, 403]
+    }
+  },
+  "bitbucket": {
+    "name": "Bitbucket",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".bitbucket.io"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "Repository not found", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  },
+  "zendesk": {
+    "name": "Zendesk",
+    "severity": "medium",
+    "cname_match": "suffix",
+    "cname": [".zendesk.com"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "Help Center Closed", "required": true}
+      ],
+      "status_codes": [404, 200]
+    }
+  },
+  "atlassian": {
+    "name": "Atlassian",
+    "severity": "high",
+    "cname_match": "suffix",
+    "cname": [".atlassian.net"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "This site can't be reached", "required": false},
+        {"type": "body", "pattern": "The site you are looking for does not exist", "required": false}
+      ],
+      "status_codes": [404, 502, 503]
+    }
+  },
+  "cargo-collective": {
+    "name": "Cargo Collective",
+    "severity": "medium",
+    "cname_match": "suffix",
+    "cname": [".cargocollective.com"],
+    "ns_takeover": false,
+    "http_check": {
+      "enabled": true,
+      "method": "GET",
+      "paths": ["/"],
+      "fingerprints": [
+        {"type": "body", "pattern": "The site you were looking for doesn't exist", "required": true}
+      ],
+      "status_codes": [404]
+    }
+  }
+}
