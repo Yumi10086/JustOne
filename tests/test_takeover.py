@@ -83,5 +83,65 @@ class TestFingerprints(unittest.TestCase):
         self.assertIsNone(result)
 
 
+from unittest.mock import patch, MagicMock
+from modules.takeover.takeover import TakeoverResult, TakeoverCheck
+
+
+class TestTakeoverResult(unittest.TestCase):
+    """TakeoverResult dataclass 测试"""
+
+    def test_dataclass_defaults(self):
+        r = TakeoverResult(subdomain='test.example.com')
+        self.assertEqual(r.status, 'not_vulnerable')
+        self.assertIsNone(r.cname)
+
+    def test_dataclass_full(self):
+        r = TakeoverResult(
+            subdomain='test.example.com',
+            cname='test.github.io',
+            service='github-pages',
+            severity='high',
+            status='vulnerable',
+            detail={'http_status': 404}
+        )
+        self.assertEqual(r.service, 'github-pages')
+        self.assertEqual(r.detail['http_status'], 404)
+
+
+class TestTakeoverDNS(unittest.TestCase):
+    """DNS 解析和 CNAME 缓存测试"""
+
+    @patch('dns.resolver.resolve')
+    def test_resolve_cname_success(self, mock_resolve):
+        mock_answer = MagicMock()
+        mock_answer.target = 'test.github.io.'
+        mock_resolve.return_value = [mock_answer]
+
+        check = TakeoverCheck('example.com')
+        cname, status = check._resolve_cname('test.example.com')
+        self.assertEqual(cname, 'test.github.io.')
+        self.assertEqual(status, 'NOERROR')
+
+    @patch('dns.resolver.resolve')
+    def test_resolve_cname_nxdomain(self, mock_resolve):
+        import dns.resolver
+        mock_resolve.side_effect = dns.resolver.NXDOMAIN
+
+        check = TakeoverCheck('example.com')
+        cname, status = check._resolve_cname('nonexistent.example.com')
+        self.assertIsNone(cname)
+        self.assertEqual(status, 'NXDOMAIN')
+
+    @patch('dns.resolver.resolve')
+    def test_resolve_cname_noanswer(self, mock_resolve):
+        import dns.resolver
+        mock_resolve.side_effect = dns.resolver.NoAnswer
+
+        check = TakeoverCheck('example.com')
+        cname, status = check._resolve_cname('test.example.com')
+        self.assertIsNone(cname)
+        self.assertEqual(status, 'NOERROR')
+
+
 if __name__ == '__main__':
     unittest.main()
