@@ -3,6 +3,10 @@
 子域名接管检测主模块
 
 负责 DNS CNAME 查询、指纹匹配和 HTTP 确认的编排。
+
+注意：DNS 查询使用同步 dnspython（通过 @lru_cache 缓存结果），
+HTTP 确认使用异步 aiohttp。check_subdomain() 是同步入口，
+run() 是异步批量入口。
 """
 
 import asyncio
@@ -49,8 +53,9 @@ class TakeoverCheck:
         self.concurrent = self.config.get('concurrent', 20)
         self.http_timeout = self.config.get('http_timeout', 10)
 
+    @staticmethod
     @lru_cache(maxsize=1024)
-    def _resolve_cname(self, subdomain: str) -> Tuple[Optional[str], str]:
+    def _resolve_cname(subdomain: str) -> Tuple[Optional[str], str]:
         """
         同步 DNS CNAME 查询（带 lru_cache）
 
@@ -60,7 +65,7 @@ class TakeoverCheck:
         """
         try:
             answers = dns.resolver.resolve(subdomain, 'CNAME')
-            return (str(answers[0].target), 'NOERROR')
+            return (str(answers[0].target).rstrip('.'), 'NOERROR')
         except dns.resolver.NoAnswer:
             return (None, 'NOERROR')
         except dns.resolver.NXDOMAIN:
@@ -70,6 +75,57 @@ class TakeoverCheck:
         except Exception as e:
             return (None, f'ERROR:{e}')
 
+    def _process_dns_result(self, subdomain: str, cname: Optional[str], dns_status: str) -> TakeoverResult:
+        """
+        处理 DNS 解析结果，返回 TakeoverResult（不含 HTTP 阶段）
+
+        :param subdomain: 子域名
+        :param cname: CNAME 目标
+        :param dns_status: DNS 状态
+        :return: TakeoverResult
+        """
+        if dns_status in ('TIMEOUT',) or dns_status.startswith('ERROR:'):
+            return TakeoverResult(
+                subdomain=subdomain, cname=cname, status='error',
+                detail={'dns_status': dns_status, 'cname_matched': None}
+            )
+        if cname is None:
+            return TakeoverResult(
+                subdomain=subdomain, cname=None, status='not_vulnerable',
+                detail={'dns_status': dns_status, 'cname_matched': None}
+            )
+
+        match_result = find_matching_fingerprint(cname, self.fingerprints)
+        if match_result is None:
+            return TakeoverResult(
+                subdomain=subdomain, cname=cname, status='not_vulnerable',
+                detail={'dns_status': dns_status, 'cname_matched': None}
+            )
+
+        service_id, fp, matched_pattern = match_result
+        return TakeoverResult(
+            subdomain=subdomain, cname=cname, service=service_id,
+            severity=fp.get('severity'), status='unknown',
+            detail={'dns_status': dns_status, 'cname_matched': matched_pattern}
+        )
+
+    async def _apply_http_check(self, result: TakeoverResult, fp: dict) -> TakeoverResult:
+        """
+        对已匹配指纹的结果执行 HTTP 确认
+
+        :param result: DNS 阶段的结果
+        :param fp: 指纹字典
+        :return: 更新后的 TakeoverResult
+        """
+        http_check = fp.get('http_check', {})
+        if http_check.get('enabled', True):
+            http_result = await self._check_http(result.subdomain, fp)
+            result.detail.update(http_result)
+            result.status = http_result.get('judgment', 'unknown')
+        else:
+            result.status = 'likely'
+        return result
+
     def check_subdomain(self, subdomain: str) -> TakeoverResult:
         """
         检查单个子域名的接管风险（同步入口）
@@ -77,62 +133,23 @@ class TakeoverCheck:
         :param subdomain: 要检查的子域名
         :return: TakeoverResult
         """
-        cname, dns_status = self._resolve_cname(subdomain)
+        cname, dns_status = TakeoverCheck._resolve_cname(subdomain)
+        result = self._process_dns_result(subdomain, cname, dns_status)
 
-        # DNS 异常处理
-        if dns_status in ('TIMEOUT',) or dns_status.startswith('ERROR:'):
-            return TakeoverResult(
-                subdomain=subdomain,
-                cname=cname,
-                status='error',
-                detail={'dns_status': dns_status, 'cname_matched': None}
-            )
+        if result.status in ('error', 'not_vulnerable'):
+            return result
 
-        if cname is None:
-            return TakeoverResult(
-                subdomain=subdomain,
-                cname=None,
-                status='not_vulnerable',
-                detail={'dns_status': dns_status, 'cname_matched': None}
-            )
+        fp = self.fingerprints.get(result.service)
+        if not fp:
+            return result
 
-        # CNAME 匹配
-        match_result = find_matching_fingerprint(cname, self.fingerprints)
-        if match_result is None:
-            return TakeoverResult(
-                subdomain=subdomain,
-                cname=cname,
-                status='not_vulnerable',
-                detail={'dns_status': dns_status, 'cname_matched': None}
-            )
-
-        service_id, fp, matched_pattern = match_result
-        result = TakeoverResult(
-            subdomain=subdomain,
-            cname=cname,
-            service=service_id,
-            severity=fp.get('severity'),
-            detail={
-                'dns_status': dns_status,
-                'cname_matched': matched_pattern,
-            }
-        )
-
-        # HTTP 确认阶段 — 需要事件循环
-        http_check = fp.get('http_check', {})
-        if http_check.get('enabled', True):
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            http_result = loop.run_until_complete(self._check_http(subdomain, fp))
-            result.detail.update(http_result)
-            result.status = http_result.get('judgment', 'unknown')
-        else:
-            result.status = 'likely'
-
-        return result
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        http_result = loop.run_until_complete(self._apply_http_check(result, fp))
+        return http_result
 
     async def _check_http(self, subdomain: str, fp: dict) -> dict:
         """
@@ -143,7 +160,6 @@ class TakeoverCheck:
         :return: 包含 judgment 字段的结果字典
         """
         return {
-            'http_enabled': True,
             'judgment': 'unknown',
             'http_status': 0,
             'http_path': '/',
@@ -163,42 +179,14 @@ class TakeoverCheck:
 
         async def _check_one(subdomain: str) -> TakeoverResult:
             async with semaphore:
-                cname, dns_status = self._resolve_cname(subdomain)
-
-                if dns_status in ('TIMEOUT',) or dns_status.startswith('ERROR:'):
-                    return TakeoverResult(
-                        subdomain=subdomain, cname=cname, status='error',
-                        detail={'dns_status': dns_status, 'cname_matched': None}
-                    )
-                if cname is None:
-                    return TakeoverResult(
-                        subdomain=subdomain, cname=None, status='not_vulnerable',
-                        detail={'dns_status': dns_status, 'cname_matched': None}
-                    )
-
-                match_result = find_matching_fingerprint(cname, self.fingerprints)
-                if match_result is None:
-                    return TakeoverResult(
-                        subdomain=subdomain, cname=cname, status='not_vulnerable',
-                        detail={'dns_status': dns_status, 'cname_matched': None}
-                    )
-
-                service_id, fp, matched_pattern = match_result
-                result = TakeoverResult(
-                    subdomain=subdomain, cname=cname, service=service_id,
-                    severity=fp.get('severity'),
-                    detail={'dns_status': dns_status, 'cname_matched': matched_pattern}
-                )
-
-                http_check = fp.get('http_check', {})
-                if http_check.get('enabled', True):
-                    http_result = await self._check_http(subdomain, fp)
-                    result.detail.update(http_result)
-                    result.status = http_result.get('judgment', 'unknown')
-                else:
-                    result.status = 'likely'
-
-                return result
+                cname, dns_status = TakeoverCheck._resolve_cname(subdomain)
+                result = self._process_dns_result(subdomain, cname, dns_status)
+                if result.status in ('error', 'not_vulnerable'):
+                    return result
+                fp = self.fingerprints.get(result.service)
+                if not fp:
+                    return result
+                return await self._apply_http_check(result, fp)
 
         tasks = [_check_one(s) for s in subdomains]
         return list(await asyncio.gather(*tasks))
