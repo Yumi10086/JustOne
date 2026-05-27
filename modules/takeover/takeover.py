@@ -58,20 +58,25 @@ class TakeoverCheck:
         self.concurrent = self.config.get('concurrent', 20)
         self.http_timeout = self.config.get('http_timeout', 10)
 
+    # 公共 DNS 服务器（国内优先）
+    _NAMESERVERS = ['223.5.5.5', '114.114.114.114', '1.1.1.1', '8.8.8.8']
+
     @staticmethod
     @lru_cache(maxsize=1024)
-    def _resolve_cname(subdomain: str, resolver_timeout: float = 8.0) -> Tuple[Optional[str], str]:
+    def _resolve_cname(subdomain: str) -> Tuple[Optional[str], str]:
         """
         同步 DNS CNAME 查询（带 lru_cache）
 
+        使用公共 DNS 服务器列表（国内优先），避免系统解析器速率限制。
+
         :param subdomain: 子域名
-        :param resolver_timeout: DNS 查询超时秒数
         :return: (cname_target, dns_status)
                  dns_status: NOERROR / NXDOMAIN / TIMEOUT / ERROR:msg
         """
         res = dns.resolver.Resolver()
-        res.timeout = resolver_timeout
-        res.lifetime = resolver_timeout
+        res.nameservers = TakeoverCheck._NAMESERVERS
+        res.timeout = 8
+        res.lifetime = 20
         try:
             answers = res.resolve(subdomain, 'CNAME')
             return (str(answers[0].target).rstrip('.'), 'NOERROR')
@@ -317,18 +322,28 @@ class TakeoverCheck:
 
         semaphore = asyncio.Semaphore(self.concurrent)
 
-        async def _check_one(subdomain: str) -> TakeoverResult:
-            async with semaphore:
-                loop = asyncio.get_running_loop()
+        async def _resolve_cname_async(subdomain: str, timeout: float = 25) -> Tuple[Optional[str], str]:
+            """异步执行 DNS 解析，带超时控制。TIMEOUT 时重试一次。"""
+            loop = asyncio.get_running_loop()
+            for attempt in range(2):
                 try:
-                    cname, dns_status = await asyncio.wait_for(
+                    cname, status = await asyncio.wait_for(
                         loop.run_in_executor(
                             None, TakeoverCheck._resolve_cname, subdomain
                         ),
-                        timeout=20
+                        timeout=timeout
                     )
                 except asyncio.TimeoutError:
-                    cname, dns_status = None, 'TIMEOUT'
+                    cname, status = None, 'TIMEOUT'
+                if status != 'TIMEOUT':
+                    return cname, status
+                if attempt == 0:
+                    await asyncio.sleep(2)
+            return cname, status
+
+        async def _check_one(subdomain: str) -> TakeoverResult:
+            async with semaphore:
+                cname, dns_status = await _resolve_cname_async(subdomain)
 
                 result = self._process_dns_result(subdomain, cname, dns_status)
                 if result.status in ('error', 'not_vulnerable'):
