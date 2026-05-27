@@ -4,7 +4,6 @@
 """
 
 import json
-import re
 from pathlib import Path
 import unittest
 
@@ -67,6 +66,21 @@ class TestFingerprints(unittest.TestCase):
         path = Path('data/takeover_fingerprints.json')
         fps = load_fingerprints(path)
         self.assertGreater(len(fps), 0)
+
+    def test_match_cname_with_inline_dict(self):
+        fp = {'cname_match': 'suffix', 'cname': ['.example.com']}
+        result = match_cname('test.example.com', fp)
+        self.assertEqual(result, '.example.com')
+
+    def test_match_cname_empty_cname(self):
+        fp = {'cname_match': 'suffix', 'cname': ['.example.com']}
+        result = match_cname('', fp)
+        self.assertIsNone(result)
+
+    def test_match_cname_invalid_type(self):
+        fp = {'cname_match': 'suffix', 'cname': ['.example.com']}
+        result = match_cname(None, fp)
+        self.assertIsNone(result)
 
 
 if __name__ == '__main__':

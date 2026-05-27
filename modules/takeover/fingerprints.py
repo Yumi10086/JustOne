@@ -16,24 +16,25 @@ _DATA_DIR = Path(__file__).resolve().parent.parent.parent / 'data'
 _DEFAULT_FINGERPRINT_FILE = _DATA_DIR / 'takeover_fingerprints.json'
 
 
-def load_fingerprints(path: Optional[Path] = None, reload: bool = False) -> dict:
+def load_fingerprints(path: Optional[Path] = None) -> dict:
     """
     加载指纹 JSON 文件，返回 {service_id: fingerprint_data} 字典
 
     :param path: 指纹文件路径，默认 data/takeover_fingerprints.json
-    :param reload: 是否重新加载（当前仅重新读取文件）
     :return: 指纹字典
     :raises FileNotFoundError: 文件不存在时抛出
-    :raises json.JSONDecodeError: JSON 解析失败时抛出
+    :raises ValueError: JSON 不是字典结构时抛出
     """
     if path is None:
-        if _DEFAULT_FINGERPRINT_FILE.exists():
-            path = _DEFAULT_FINGERPRINT_FILE
-        else:
-            path = Path('data/takeover_fingerprints.json')
+        path = _DEFAULT_FINGERPRINT_FILE
 
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"指纹文件 {path} 应为字典结构，实际为 {type(data).__name__}"
+        )
 
     return data
 
@@ -51,6 +52,9 @@ def match_cname(cname: str, fingerprint: dict) -> Optional[str]:
     :param fingerprint: 指纹字典
     :return: 匹配到的模式字符串，无匹配则返回 None
     """
+    if not cname:
+        return None
+
     match_type = fingerprint.get('cname_match', 'suffix')
     patterns = fingerprint.get('cname', [])
 
