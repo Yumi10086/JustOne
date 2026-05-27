@@ -15,6 +15,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Set, List, Tuple
 
+from tqdm import tqdm
+
 import aiohttp
 import dns.resolver
 
@@ -58,16 +60,20 @@ class TakeoverCheck:
 
     @staticmethod
     @lru_cache(maxsize=1024)
-    def _resolve_cname(subdomain: str) -> Tuple[Optional[str], str]:
+    def _resolve_cname(subdomain: str, resolver_timeout: float = 8.0) -> Tuple[Optional[str], str]:
         """
         同步 DNS CNAME 查询（带 lru_cache）
 
         :param subdomain: 子域名
+        :param resolver_timeout: DNS 查询超时秒数
         :return: (cname_target, dns_status)
                  dns_status: NOERROR / NXDOMAIN / TIMEOUT / ERROR:msg
         """
+        res = dns.resolver.Resolver()
+        res.timeout = resolver_timeout
+        res.lifetime = resolver_timeout
         try:
-            answers = dns.resolver.resolve(subdomain, 'CNAME')
+            answers = res.resolve(subdomain, 'CNAME')
             return (str(answers[0].target).rstrip('.'), 'NOERROR')
         except dns.resolver.NoAnswer:
             return (None, 'NOERROR')
@@ -298,18 +304,32 @@ class TakeoverCheck:
 
         return best
 
-    async def run(self, subdomains: Set[str]) -> List[TakeoverResult]:
+    async def run(self, subdomains: Set[str], show_progress: bool = True) -> List[TakeoverResult]:
         """
-        批量异步检查子域名
+        批量异步检查子域名（带进度条）
 
         :param subdomains: 子域名集合
+        :param show_progress: 是否显示 tqdm 进度条
         :return: TakeoverResult 列表
         """
+        if not subdomains:
+            return []
+
         semaphore = asyncio.Semaphore(self.concurrent)
 
         async def _check_one(subdomain: str) -> TakeoverResult:
             async with semaphore:
-                cname, dns_status = TakeoverCheck._resolve_cname(subdomain)
+                loop = asyncio.get_running_loop()
+                try:
+                    cname, dns_status = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, TakeoverCheck._resolve_cname, subdomain
+                        ),
+                        timeout=20
+                    )
+                except asyncio.TimeoutError:
+                    cname, dns_status = None, 'TIMEOUT'
+
                 result = self._process_dns_result(subdomain, cname, dns_status)
                 if result.status in ('error', 'not_vulnerable'):
                     return result
@@ -319,7 +339,28 @@ class TakeoverCheck:
                 return await self._apply_http_check(result, fp)
 
         tasks = [_check_one(s) for s in subdomains]
-        return list(await asyncio.gather(*tasks))
+        results: List[TakeoverResult] = []
+
+        pbar = None
+        if show_progress:
+            pbar = tqdm(
+                total=len(tasks),
+                desc='接管检测',
+                ncols=60,
+                mininterval=0.3,
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
+            )
+
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+            if pbar:
+                pbar.update(1)
+
+        if pbar:
+            pbar.close()
+
+        return results
 
 
 def takeover_run(domain: str, subdomains: Set[str],
@@ -329,14 +370,15 @@ def takeover_run(domain: str, subdomains: Set[str],
 
     :param domain: 目标域名
     :param subdomains: 子域名集合
-    :param config: 可选配置
+    :param config: 可选配置（支持 show_progress 键控制进度条）
     :return: 字典列表
     """
+    show_progress = (config or {}).get('show_progress', True)
     check = TakeoverCheck(domain, config)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        results = loop.run_until_complete(check.run(subdomains))
+        results = loop.run_until_complete(check.run(subdomains, show_progress))
         return [{
             'subdomain': r.subdomain,
             'cname': r.cname,

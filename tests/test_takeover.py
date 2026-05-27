@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 import unittest
 
+import dns.resolver
+
 from modules.takeover.fingerprints import load_fingerprints, match_cname, find_matching_fingerprint
 
 
@@ -83,7 +85,7 @@ class TestFingerprints(unittest.TestCase):
         self.assertIsNone(result)
 
 
-from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from modules.takeover.takeover import TakeoverResult, TakeoverCheck
 
 
@@ -114,7 +116,7 @@ class TestTakeoverDNS(unittest.TestCase):
     def setUp(self):
         TakeoverCheck._resolve_cname.cache_clear()
 
-    @patch('dns.resolver.resolve')
+    @patch.object(dns.resolver.Resolver, 'resolve')
     def test_resolve_cname_success(self, mock_resolve):
         mock_answer = MagicMock()
         mock_answer.target = 'test.github.io.'
@@ -125,9 +127,8 @@ class TestTakeoverDNS(unittest.TestCase):
         self.assertEqual(cname, 'test.github.io')
         self.assertEqual(status, 'NOERROR')
 
-    @patch('dns.resolver.resolve')
+    @patch.object(dns.resolver.Resolver, 'resolve')
     def test_resolve_cname_nxdomain(self, mock_resolve):
-        import dns.resolver
         mock_resolve.side_effect = dns.resolver.NXDOMAIN
 
         check = TakeoverCheck('example.com')
@@ -135,9 +136,8 @@ class TestTakeoverDNS(unittest.TestCase):
         self.assertIsNone(cname)
         self.assertEqual(status, 'NXDOMAIN')
 
-    @patch('dns.resolver.resolve')
+    @patch.object(dns.resolver.Resolver, 'resolve')
     def test_resolve_cname_noanswer(self, mock_resolve):
-        import dns.resolver
         mock_resolve.side_effect = dns.resolver.NoAnswer
 
         check = TakeoverCheck('example.com')
