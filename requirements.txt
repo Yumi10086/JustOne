@@ -1,0 +1,29 @@
+# ==================== 核心依赖 (必须) ====================
+typer>=0.12.0
+rich>=13.0.0
+requests>=2.31.0
+dnspython>=2.6.0
+loguru>=0.7.0
+aiohttp>=3.9.0
+tqdm>=4.66.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# ==================== 可选模块依赖 ====================
+# Playwright 浏览器自动化（Google/Yahoo 搜索模块需要）
+playwright>=1.40.0
+
+# Shodan API（shodan 搜索引擎模块需要）
+shodan>=1.30.0
+
+# LeakIX API（leakix 数据集模块需要）
+leakix>=1.1.0
+
+# BeautifulSoup（common/similarity.py 需要）
+beautifulsoup4>=4.12.0
+
+# SQLAlchemy（common/records.py 需要）
+SQLAlchemy>=2.0.0
+
+# idna（common/tldextract.py 需要）
+idna>=3.0
