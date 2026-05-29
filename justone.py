@@ -5,8 +5,9 @@ JustOne - 子域名收集工具
 =========================
 
 一、基本收集
-    python justone.py main example.com                    # 完整收集（搜索+证书+数据集+爆破）
+    python justone.py main example.com                    # 完整收集（搜索+证书+数据集+爆破+置换）
     python justone.py main example.com --no-brute        # 禁用爆破模块
+    python justone.py main example.com --no-altdns       # 禁用子域置换模块
     python justone.py main example.com --no-search       # 禁用搜索引擎模块
     python justone.py main example.com --no-cert         # 禁用证书查询模块
     python justone.py main example.com --no-dataset      # 禁用数据集查询模块
@@ -16,22 +17,34 @@ JustOne - 子域名收集工具
     python justone.py brute example.com -c 1000          # 设置并发数
     python justone.py brute example.com -w wordlist.txt  # 指定字典文件
 
-三、检查存活状态
+三、子域置换扩展
+    python justone.py altdns example.com                  # 自动收集+爆破后置换
+    python justone.py altdns example.com -i subdomains.txt # 从已知子域名文件直接置换
+    python justone.py altdns example.com --no-number     # 禁用数字追加置换规则
+
+四、检查存活状态 & DNS安全
     python justone.py check example.com                  # HTTP 存活检查
     python justone.py check example.com --dns            # 仅 DNS 检查
+    python justone.py check example.com --dns-security   # 执行 DNS 安全检测（DNSSEC/投毒/劫持）
     python justone.py check -i subdomains.txt             # 从文件批量检查
     python justone.py check -i subdomains.txt -f txt     # 指定输出格式
 
-四、输出选项
+五、子域接管检测
+    python justone.py takeover example.com                # 检测子域名接管风险
+    python justone.py takeover -i subdomains.txt          # 从文件批量检测
+
+六、输出选项
     -o, --output PATH      指定输出文件路径（默认: results/目录）
     -f, --format FORMAT   输出格式: csv/json/txt（默认: csv）
 
     # 默认输出到 results/ 目录，自动添加功能前缀:
-    #   main 命令   -> results/collect_域名.csv
-    #   brute 命令  -> results/brute_域名.csv
-    #   check 命令  -> results/check_域名.csv
+    #   main 命令    -> results/collect_域名.csv
+    #   brute 命令   -> results/brute_域名.csv
+    #   altdns 命令  -> results/altdns_域名.csv
+    #   check 命令   -> results/check_域名.csv
+    #   takeover 命令 -> results/takeover_域名.csv
 
-五、其他
+七、其他
     python justone.py --version                          # 查看版本
     python justone.py --help                             # 查看帮助
     python justone.py main --help                        # 查看 main 命令帮助
@@ -49,6 +62,7 @@ from config.logging import init_logging
 from config.settings import settings
 from modules.collect import Collect
 from modules.brute import Brute
+from modules.altdns import Altdns
 from modules.export import export_subdomains, export_results
 from modules.takeover import takeover_run
 from common.domain import Domain
@@ -109,6 +123,7 @@ def main(
     disable_search: bool = typer.Option(False, "--no-search", help="禁用搜索引擎模块"),
     disable_cert: bool = typer.Option(False, "--no-cert", help="禁用证书查询模块"),
     disable_dataset: bool = typer.Option(False, "--no-dataset", help="禁用数据集模块"),
+    altdns: bool = typer.Option(True, "--altdns/--no-altdns", help="启用子域置换模块"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
     """
@@ -174,6 +189,17 @@ def main(
         show_progress('完成', start)
         print()
 
+    if altdns and subdomains:
+        start = time.time()
+        sys.stdout.write('  执行子域置换... ')
+        sys.stdout.flush()
+        altdns_module = Altdns(main_domain, subdomains)
+        altdns_subdomains = altdns_module.run()
+        subdomains.update(altdns_subdomains)
+        total_elapse += altdns_module.get_elapse() or 0
+        show_progress('完成', start)
+        print()
+
     if subdomains:
         console.print(f"\n[bold green]完成![/bold green] 共发现 [yellow]{len(subdomains)}[/yellow] 个子域名")
         console.print(f"[dim]总耗时: {total_elapse:.1f} 秒[/dim]")
@@ -194,6 +220,7 @@ def main(
 def check(
     target: Optional[str] = typer.Argument(None, help="目标域名"),
     dns_only: bool = typer.Option(False, "--dns", help="仅执行 DNS 检查"),
+    dns_security: bool = typer.Option(False, "--dns-security", "--dnssec", help="执行 DNS 安全检测（DNSSEC/投毒/劫持）"),
     cdn_check: bool = typer.Option(False, "--cdn", help="执行 CDN 识别"),
     input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="子域名列表文件（每行一个子域名）"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径"),
@@ -205,12 +232,14 @@ def check(
     示例:
         python justone.py check example.com                    # 检查一个域名
         python justone.py check example.com --dns              # 仅 DNS 检查
+        python justone.py check example.com --dns-security     # DNS 安全检测
         python justone.py check -i subdomains.txt -o results   # 从文件批量检查
     """
     from modules.check import DNSCheck, HTTPCheck
     from modules.check.http import AsyncHTTPCheck
     from modules.check import CertInfo, Robots, Sitemap, CrossDomain, AXFR, NSEC
     from modules.check.cdn import CDNCheck
+    from modules.check import DNSSecurityCheck
     from modules.export import export_results, export_subdomains
 
     init_logging()
@@ -274,6 +303,20 @@ def check(
         for r in cdn_results:
             if r['cdn']:
                 console.print(f"  [dim]{r['subdomain']}: CDN ({r.get('cdn_provider', 'unknown')})[/dim]")
+
+    if dns_security and target:
+        console.print(f"\n[bold cyan]DNS 安全检测: {main_domain}[/bold cyan]")
+        security = DNSSecurityCheck(main_domain)
+        security_results = security.run()
+        for r in security_results:
+            color = {
+                'secure': 'green',
+                'insecure': 'yellow',
+                'suspicious': 'red',
+                'error': 'red',
+                'info': 'dim',
+            }.get(r.status, 'white')
+            console.print(f"  [{color}][{r.status.upper()}][/] {r.check}: {r.detail}")
 
     if results:
         if not output:
@@ -342,6 +385,98 @@ def brute(
 
 
 @app.command()
+def altdns(
+    target: str = typer.Argument(..., help="目标域名"),
+    input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="已知子域名列表文件（每行一个子域名）"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径"),
+    format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
+    concurrent: int = typer.Option(50, "--concurrent", "-c", help="并发数"),
+    wordlist: Optional[Path] = typer.Option(None, "--wordlist", "-w", help="置换词表路径"),
+    no_prefix: bool = typer.Option(False, "--no-prefix", help="禁用前缀置换"),
+    no_suffix: bool = typer.Option(False, "--no-suffix", help="禁用后缀置换"),
+    no_number: bool = typer.Option(False, "--no-number", help="禁用数字追加置换"),
+    no_insert: bool = typer.Option(False, "--no-insert", help="禁用连字符插入置换"),
+):
+    """
+    对已有子域名进行置换扩展
+
+    基于已知子域名，通过加前缀/后缀/数字/连字符等规则生成新候选并验证。
+
+    示例:
+        python justone.py altdns example.com
+        python justone.py altdns example.com -i subdomains.txt
+        python justone.py altdns example.com -i subdomains.txt --no-number
+    """
+    init_logging()
+
+    subdomains: Set[str] = set()
+    main_domain = Domain(target).registered()
+
+    if input_file:
+        if not input_file.exists():
+            console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
+            raise typer.Exit(1)
+        with open(input_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    subdomains.add(line)
+        console.print(f"[bold cyan]从文件加载 {len(subdomains)} 个子域名[/bold cyan]")
+        if not main_domain and subdomains:
+            first = next(iter(subdomains))
+            main_domain = Domain(first).registered()
+            console.print(f"[dim]自动推断注册域名: {main_domain}[/dim]")
+
+    if not main_domain:
+        console.print(f"[bold red]错误: 无法解析目标域名: {target}[/bold red]")
+        raise typer.Exit(1)
+
+    if not input_file:
+        console.print(f"[bold cyan]注册域名: {main_domain}[/bold cyan]")
+
+        console.print(f"[cyan]执行信息收集...[/cyan]")
+        collect = Collect(main_domain, {'enable_search': True, 'enable_certificate': True, 'enable_dataset': True})
+        subdomains = set(collect.run())
+        console.print(f"[dim]收集到 {len(subdomains)} 个子域名[/dim]")
+
+        console.print(f"[cyan]执行爆破...[/cyan]")
+        brute_module = Brute(main_domain)
+        brute_subdomains = brute_module.run()
+        subdomains.update(brute_subdomains)
+        console.print(f"[dim]爆破发现 {len(brute_subdomains)} 个，共 {len(subdomains)} 个已知子域名[/dim]")
+
+    if not subdomains:
+        console.print("[yellow]没有已知子域名，无法执行置换[/yellow]")
+        return
+
+    config = {
+        'concurrent': concurrent,
+        'prefix': not no_prefix,
+        'suffix': not no_suffix,
+        'number': not no_number,
+        'insert': not no_insert,
+    }
+    if wordlist:
+        config['wordlist'] = str(wordlist)
+
+    console.print(f"[cyan]开始子域置换（已知 {len(subdomains)} 个）...[/cyan]")
+    altdns_module = Altdns(main_domain, subdomains, config)
+    altdns_subdomains = altdns_module.run(show_progress=True)
+
+    console.print(f"[green]置换完成: 发现 {len(altdns_subdomains)} 个新子域名，耗时 {altdns_module.get_elapse():.1f} 秒[/green]")
+
+    if altdns_subdomains:
+        if not output:
+            output = get_default_output(target, 'altdns', format)
+        if format == 'txt':
+            export_subdomains(sorted(altdns_subdomains), output, 'txt')
+        else:
+            results = [{'subdomain': s} for s in sorted(altdns_subdomains)]
+            export_results(results, output, format)
+        console.print(f"[green]结果已保存到: {output}[/green]")
+
+
+@app.command()
 def takeover(
     target: Optional[str] = typer.Argument(None, help="目标域名"),
     input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="子域名列表文件（每行一个子域名）"),
@@ -350,6 +485,7 @@ def takeover(
     concurrent: int = typer.Option(20, "--concurrent", "-c", help="并发数"),
     fingerprint_file: Optional[Path] = typer.Option(None, "--fingerprint-file", help="自定义接管指纹文件路径"),
     skip_brute: bool = typer.Option(False, "--skip-brute", help="跳过爆破阶段（仅从收集模块获取子域名）"),
+    no_progress: bool = typer.Option(False, "--no-progress", help="隐藏进度条"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
     """
@@ -415,6 +551,7 @@ def takeover(
 
     config = {
         'concurrent': concurrent,
+        'show_progress': not no_progress,
     }
     if fingerprint_file:
         config['fingerprint_file'] = str(fingerprint_file)

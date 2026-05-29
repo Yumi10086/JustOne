@@ -12,6 +12,7 @@ from .nsec import NSEC, run as nsec_run
 from .robots import Robots, run as robots_run
 from .sitemap import Sitemap, run as sitemap_run
 from .cdn import CDNCheck
+from .dns_security import DNSSecurityCheck, DNSSecurityResult
 
 __all__ = [
     'HTTPCheck',
@@ -24,4 +25,5 @@ __all__ = [
     'Robots', 'robots_run',
     'Sitemap', 'sitemap_run',
     'CDNCheck',
+    'DNSSecurityCheck', 'DNSSecurityResult',
 ]

@@ -46,12 +46,12 @@ class AsyncModuleMixin:
                     )
         return self._async_session
 
-    async def async_get(
-        self, url: str, params: dict = None, check: bool = True,
-        ignore: bool = False, **kwargs
-    ) -> Optional[str]:
-        """
-        异步 GET 请求，直连优先，代理回退 + 指数退避
+        async def async_get(
+            self, url: str, params: dict = None, check: bool = True,
+            ignore: bool = False, **kwargs
+        ) -> Optional[str]:
+            """
+            异步 GET 请求，代理优先(若配置)，直连回退 + 指数退避
 
         :param str url: 请求 URL
         :param dict params: 查询参数
@@ -67,7 +67,7 @@ class AsyncModuleMixin:
             headers.update(kwargs.pop('headers'))
 
         for attempt in range(self.request_retries):
-            proxy = self.proxy if attempt == 1 else None
+            proxy = self.proxy if attempt == 0 else None
             backoff = min(2 ** attempt, 30)
 
             try:
@@ -91,21 +91,27 @@ class AsyncModuleMixin:
                     aiohttp.ClientProxyConnectionError,
                     aiohttp.ServerTimeoutError,
                     asyncio.TimeoutError) as e:
-                if attempt == 0 and self.proxy:
-                    logger.debug(
-                        f'直连失败，{backoff}s 后尝试代理: {str(e)[:80]}'
-                    )
-                    await asyncio.sleep(backoff + random.uniform(0, 1))
-                    continue
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(
+                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
+                        )
+                        await asyncio.sleep(backoff + random.uniform(0, 1))
+                        continue
+                    logger.log(level, f'async_get 失败: {str(e)[:100]}')
+                    return None
                 logger.log(level, f'async_get 失败: {str(e)[:100]}')
                 return None
             except Exception as e:
-                if attempt == 0 and self.proxy:
-                    logger.debug(
-                        f'直连失败，{backoff}s 后尝试代理: {str(e)[:80]}'
-                    )
-                    await asyncio.sleep(backoff + random.uniform(0, 1))
-                    continue
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(
+                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
+                        )
+                        await asyncio.sleep(backoff + random.uniform(0, 1))
+                        continue
+                    logger.log(level, f'async_get 失败: {str(e)[:100]}')
+                    return None
                 logger.log(level, f'async_get 失败: {str(e)[:100]}')
                 return None
 
@@ -116,7 +122,7 @@ class AsyncModuleMixin:
         **kwargs
     ) -> Optional[str]:
         """
-        异步 POST 请求，直连优先，代理回退
+        异步 POST 请求，代理优先(若配置)，直连回退
 
         :param str url: 请求 URL
         :param dict data: 请求体
@@ -130,7 +136,7 @@ class AsyncModuleMixin:
             headers.update(kwargs.pop('headers'))
 
         for attempt in range(self.request_retries):
-            proxy = self.proxy if attempt == 1 else None
+            proxy = self.proxy if attempt == 0 else None
             backoff = min(2 ** attempt, 30)
 
             try:
@@ -153,21 +159,27 @@ class AsyncModuleMixin:
             except (aiohttp.ClientConnectorError,
                     aiohttp.ServerTimeoutError,
                     asyncio.TimeoutError) as e:
-                if attempt == 0 and self.proxy:
-                    logger.debug(
-                        f'直连失败，{backoff}s 后尝试代理: {str(e)[:80]}'
-                    )
-                    await asyncio.sleep(backoff + random.uniform(0, 1))
-                    continue
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(
+                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
+                        )
+                        await asyncio.sleep(backoff + random.uniform(0, 1))
+                        continue
+                    logger.error(f'async_post 失败: {str(e)[:100]}')
+                    return None
                 logger.error(f'async_post 失败: {str(e)[:100]}')
                 return None
             except Exception as e:
-                if attempt == 0 and self.proxy:
-                    logger.debug(
-                        f'直连失败，{backoff}s 后尝试代理: {str(e)[:80]}'
-                    )
-                    await asyncio.sleep(backoff + random.uniform(0, 1))
-                    continue
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(
+                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
+                        )
+                        await asyncio.sleep(backoff + random.uniform(0, 1))
+                        continue
+                    logger.error(f'async_post 失败: {str(e)[:100]}')
+                    return None
                 logger.error(f'async_post 失败: {str(e)[:100]}')
                 return None
 

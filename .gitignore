@@ -167,5 +167,5 @@ docker-compose.override.yml
 *.md
 DevLog/
 tests/
-.skill/
+.skills/
 .omo

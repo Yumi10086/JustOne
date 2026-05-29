@@ -44,11 +44,11 @@ class Module(object):
 
         self.cookie = None
         self.header = dict()
-        self.proxy = None
         self.delay = 1
         self.timeout = self.config.get('timeout', http_config.get('timeout', 27))
         self.verify = self.config.get('verify_ssl', http_config.get('verify_ssl', False))
         self.proxy_enable = self.config.get('proxy_enable', http_config.get('proxy_enable', False))
+        self.proxy = utils.get_random_proxy() if self.proxy_enable else None
         self.results_dir = self.config.get('results_dir', Path.cwd() / 'results')
         self.save_module_result = self.config.get('save_module_result', False)
 
@@ -163,14 +163,14 @@ class Module(object):
 
     def _do_get(self, session, url, params, **kwargs):
         """
-        执行 GET 请求，默认直连，失败自动尝试代理
+        执行 GET 请求，配置了代理则优先使用，失败回退直连
 
-        重试策略：直连 → 代理（最多 request_retries 次）
+        重试策略：代理(如果有) → 直连（最多 request_retries 次）
         """
         last_error = None
 
         for attempt in range(self.request_retries):
-            proxies = self.proxy if attempt == 1 else None
+            proxies = self.proxy if attempt == 0 else None
 
             try:
                 return session.get(url, params=params, cookies=self.cookie,
@@ -180,14 +180,20 @@ class Module(object):
                     requests.exceptions.SSLError,
                     requests.exceptions.ConnectionError) as e:
                 last_error = e
-                if attempt == 0 and self.proxy:
-                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
+                    else:
+                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
                     continue
                 raise
             except Exception as e:
                 last_error = e
-                if attempt == 0 and self.proxy:
-                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
+                    else:
+                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
                     continue
                 raise
 
@@ -217,12 +223,12 @@ class Module(object):
 
     def _do_post(self, session, url, data, **kwargs):
         """
-        执行 POST 请求，默认直连，失败自动尝试代理
+        执行 POST 请求，配置了代理则优先使用，失败回退直连
         """
         last_error = None
 
         for attempt in range(self.request_retries):
-            proxies = self.proxy if attempt == 1 else None
+            proxies = self.proxy if attempt == 0 else None
 
             try:
                 return session.post(url, data=data, cookies=self.cookie,
@@ -232,14 +238,20 @@ class Module(object):
                     requests.exceptions.SSLError,
                     requests.exceptions.ConnectionError) as e:
                 last_error = e
-                if attempt == 0 and self.proxy:
-                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
+                    else:
+                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
                     continue
                 raise
             except Exception as e:
                 last_error = e
-                if attempt == 0 and self.proxy:
-                    logger.debug(f'直连失败，尝试代理: {str(e.args[0])[:80]}')
+                if attempt == 0:
+                    if self.proxy:
+                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
+                    else:
+                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
                     continue
                 raise
 
@@ -291,11 +303,9 @@ class Module(object):
         :param str module: 模块名称
         :return: 代理配置
         """
-        if not self.proxy_enable:
-            logger.debug('所有模块不使用代理')
-            return self.proxy
-        logger.debug(f'{module} 模块使用代理')
-        return utils.get_random_proxy()
+        if self.proxy:
+            logger.debug(f'{module} 模块使用代理')
+        return self.proxy
 
     def match_subdomains(self, resp, distinct=True, fuzzy=True):
         """
@@ -339,7 +349,6 @@ class Module(object):
         for url in urls:
             try:
                 self.get_header()
-                self.proxy = self.get_proxy(self.source)
                 resp = self.get(url, check=False, ignore=True, raise_error=True)
                 if not resp:
                     continue
