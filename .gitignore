@@ -172,3 +172,4 @@ tests/
 tests/
 docs/
 !requirements.txt
+*.zip

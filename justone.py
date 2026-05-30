@@ -50,6 +50,7 @@ JustOne - 子域名收集工具
     python justone.py main --help                        # 查看 main 命令帮助
 """
 
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -63,6 +64,7 @@ from config.settings import settings
 from modules.collect import Collect
 from modules.brute import Brute
 from modules.altdns import Altdns
+from modules.enrich import Enrich
 from modules.export import export_subdomains, export_results
 from modules.takeover import takeover_run
 from common.domain import Domain
@@ -594,6 +596,50 @@ def takeover(
         else:
             export_results(results, output, format)
         console.print(f"[green]结果已保存到: {output}[/green]")
+
+
+@app.command()
+def enrich(
+    db_path: str = typer.Argument(..., help="SQLite 数据库文件路径（如 results/result.sqlite3）"),
+    table_name: Optional[str] = typer.Option(None, "--table", "-t", help="指定表名（不指定则自动检测）"),
+    concurrent: int = typer.Option(100, "--concurrent", "-c", help="HTTP 检查并发数"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
+):
+    """
+    丰富已有子域名信息
+
+    从 SQLite 数据库读取已有子域名记录，通过 DNS 解析、HTTP 探测、
+    CDN 识别、IP 定位等方式补全缺失信息并更新数据库。
+
+    示例:
+
+        python justone.py enrich results/result.sqlite3
+
+        python justone.py enrich results/result.sqlite3 -c 200
+
+        python justone.py enrich results/result.sqlite3 -t example_com
+    """
+    init_logging(debug=verbose)
+
+    db_file = Path(db_path)
+    if not db_file.exists():
+        console.print(f"[bold red]错误: 数据库文件不存在: {db_file}[/bold red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold green]JustOne[/bold green] 开始丰富子域名信息: [cyan]{db_file}[/cyan]")
+
+    enricher = Enrich(str(db_file), concurrent=concurrent)
+    try:
+        enricher.load(table_name)
+        if not enricher.records:
+            console.print("[yellow]数据库中没有记录需要丰富[/yellow]")
+            return
+
+        console.print(f"[cyan]共 {len(enricher.records)} 条记录，开始丰富...[/cyan]")
+        updated = asyncio.run(enricher.enrich(show_progress=True))
+        console.print(f"[bold green]完成![/bold green] 更新了 [yellow]{updated}[/yellow] 条记录")
+    finally:
+        enricher.close()
 
 
 if __name__ == "__main__":
