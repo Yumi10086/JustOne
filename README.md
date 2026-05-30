@@ -7,6 +7,7 @@
 ## 功能
 
 - **多源收集** — 12 个搜索引擎 + 3 个证书透明度日志 + 15 个开放数据集 + 5 个威胁情报
+- **信息丰富** — 对已有结果补全 DNS 解析、HTTP 探测、CDN 识别、IP 地理/ASN 信息
 - **DNS 爆破** — 高并发词表爆破，递归深度扩展
 - **子域置换** — 基于已有子域名生成变异候选（前缀/后缀/数字/连字符插入）
 - **存活验证** — HTTP 异步批量检查 / DNS 快速解析
@@ -98,6 +99,21 @@ python justone.py check example.com --dnssec
 python justone.py check -i subdomains.txt
 ```
 
+### 子域信息丰富
+
+对已有子域名结果进行 DNS 解析、HTTP 探测、CDN 识别和 IP 定位补全：
+
+```bash
+# 从 SQLite 数据库读取并丰富
+python justone.py enrich results/result.sqlite3
+
+# 指定表名
+python justone.py enrich results/result.sqlite3 -t example_com
+
+# 设置并发数
+python justone.py enrich results/result.sqlite3 -c 200
+```
+
 ### 子域接管检测
 
 ```bash
@@ -121,6 +137,7 @@ python justone.py main example.com -f json                 # 输出格式: csv/j
 | `brute` | `results/brute_域名.csv` |
 | `altdns` | `results/altdns_域名.csv` |
 | `check` | `results/check_域名.csv` |
+| `enrich` | `results/result.sqlite3`（读取已有数据库，原地更新） |
 | `takeover` | `results/takeover_域名.csv` |
 
 ## 模块架构
@@ -137,11 +154,12 @@ common/
   utils.py          ← 工具函数 (匹配/代理/重试)
   resolve.py        ← DNS 批量解析
   database.py       ← SQLite 持久化
-modules/
-  collect.py        ← 收集调度器
-  brute.py          ← DNS 爆破
-  altdns.py         ← 子域置换
-  export.py         ← CSV/JSON/TXT 导出
+  modules/
+    collect.py        ← 收集调度器
+    brute.py          ← DNS 爆破
+    altdns.py         ← 子域置换
+    enrich.py         ← 子域信息丰富（DNS/HTTP/IP 补全）
+    export.py         ← CSV/JSON/TXT 导出
   search/           ← 12 个搜索引擎
   certificates/     ← crt.sh / CertSpotter / Censys
   datasets/         ← 15 个开放数据集
@@ -171,7 +189,7 @@ pytest tests/test_altdns.py    # 单模块测试
 pytest -k "test_dnssec"         # 按关键字过滤
 ```
 
-全量测试约 340+ 用例，7 个跳过为 API Key 缺失模块，属正常预期。
+全量测试约 350+ 用例，7 个跳过为 API Key 缺失模块，属正常预期。
 
 ## 数据源
 
@@ -184,8 +202,10 @@ pytest -k "test_dnssec"         # 按关键字过滤
 | 数据集 | Anubis, Chinaz, Circl, Cloudflare, DNSDumpster, DNSdb, FullHunt, HackerTarget, IP138, LeakIX, NetCraft, PassiveDNS, RapidDNS, Robtex, SecurityTrails, SiteDossier |
 | 威胁情报 | AlienVault OTX, URLScan.io, ThreatBook, VirusTotal, ThreatMiner |
 | DNS 查询 | MX, NS, SOA, SPF, TXT |
+| IP 定位 | CDN 识别 / CIDR / ASN / ORG 查询 |
 | 安全检测 | DNSSEC / 多解析器一致性 / 劫持检测 |
 | 接管检测 | 15 种服务指纹 (GitHub Pages, AWS S3, Heroku, Vercel 等) |
+| 信息丰富 | 对已有数据库结果补全 DNS 解析、HTTP 探测、CDN、IP 信息 |
 
 ## 致谢
 
