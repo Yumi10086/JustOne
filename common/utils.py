@@ -164,6 +164,60 @@ def get_proxy():
     return None
 
 
+def get_socks5_proxy_list() -> list:
+    """
+    从代理池中筛选 SOCKS5 代理列表
+
+    :return: [(host, port), ...] 格式的 SOCKS5 代理列表
+    """
+    from urllib.parse import urlparse
+
+    proxies = []
+    for addr in http_config.get('proxy_pool', []):
+        if isinstance(addr, str) and addr.strip():
+            addr = addr.strip()
+            if addr.startswith('socks5://') or addr.startswith('socks5h://'):
+                parsed = urlparse(addr)
+                hostname = parsed.hostname
+                port = parsed.port or 1080
+                if hostname:
+                    proxies.append((hostname, port))
+    return proxies
+
+
+def get_random_socks5_proxy() -> Optional[tuple]:
+    """
+    随机获取一个 SOCKS5 代理
+
+    :return: (host, port) 或 None
+    """
+    proxies = get_socks5_proxy_list()
+    if not proxies:
+        return None
+    return random.choice(proxies)
+
+
+def test_socks5_proxy(host: str, port: int, timeout: int = 5) -> bool:
+    """
+    测试 SOCKS5 代理是否可用
+
+    :param str host: 代理主机
+    :param int port: 代理端口
+    :param int timeout: 超时时间（秒）
+    :return: 是否可用
+    """
+    try:
+        import socks as socks_module
+        s = socks_module.socksocket()
+        s.set_proxy(socks_module.SOCKS5, host, port, rdns=True)
+        s.settimeout(timeout)
+        s.connect(('8.8.8.8', 53))
+        s.close()
+        return True
+    except Exception:
+        return False
+
+
 def split_list(ls, size):
     """
     将列表分割为指定大小的子列表
@@ -728,55 +782,6 @@ async def new_browser_context(*, proxy=None, user_agent=None, headless=True,
                 await pw.stop()
             except Exception:
                 pass
-        return None, None, None
-
-    try:
-        pw = await async_playwright().start()
-        browser = await pw.chromium.launch(
-            headless=headless,
-            channel=channel,
-            args=[
-                '--disable-blink-features=AutomationControlled',
-                '--no-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-            ]
-        )
-
-        playwright_proxy = _convert_playwright_proxy(proxy)
-
-        context_options = {
-            'user_agent': user_agent or random.choice(user_agents),
-            'locale': locale,
-            'timezone_id': timezone_id,
-        }
-
-        if viewport:
-            context_options['viewport'] = viewport
-
-        if playwright_proxy:
-            context_options['proxy'] = playwright_proxy
-
-        context = await browser.new_context(**context_options)
-
-        await context.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-            Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-            Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-            Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
-            Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
-            window.chrome = {runtime: {}};
-            const _query = window.navigator.permissions.query.bind(window.navigator.permissions);
-            window.navigator.permissions.query = function(params) {
-                if (params.name === 'notifications')
-                    return Promise.resolve({state: Notification.permission});
-                return _query(params);
-            };
-        """)
-
-        return browser, context, pw
-    except Exception as e:
-        get_logger().error(f'Playwright 浏览器启动失败: {e}')
         return None, None, None
 
 

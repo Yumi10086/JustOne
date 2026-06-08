@@ -3,19 +3,136 @@ DNS 解析模块
 """
 
 import json
+import random
+import socket as socket_module
 from pathlib import Path
 from typing import List, Dict, Optional, Callable
+from urllib.parse import urlparse
 
 import dns.exception
+import dns.query
 import dns.resolver
 
 from config.logging import logger
+
+# ==================== SOCKS5 DNS 代理 ====================
+
+_socks5_enabled = False
+_socks5_proxies: List[tuple] = []  # [(host, port), ...]
+
+# 保存 dnspython 原始函数，用于恢复
+_orig_tcp = dns.query.tcp
 
 resolve_config = {
     'project_root': Path(__file__).parent.parent,
     'results_dir': Path(__file__).parent.parent / 'results',
     'dns_nameservers': ['223.5.5.5', '119.29.29.29', '114.114.114.114', '8.8.8.8', '1.1.1.1'],
 }
+
+
+def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
+                one_rr_per_rrset=False, ignore_trailing=False, sock=None):
+    """
+    SOCKS5 代理版 dns.query.tcp
+
+    完全接管 DNS-over-TCP 流程：创建 PySocks socksocket → SOCKS5 握手 → 发送 DNS 查询 → 接收响应。
+    不依赖 dnspython 内部的 make_socket / _connect，避免版本兼容问题。
+
+    :param q: dns.message.Message，要发送的 DNS 查询
+    :param where: str，DNS 服务器地址
+    :param timeout: float，超时秒数
+    :param port: int，端口
+    :return: dns.message.Message，DNS 响应
+    """
+    import socks as _socks
+    import dns.message
+    import struct
+    import time as _time
+
+    proxy_addr = random.choice(_socks5_proxies)
+
+    s = _socks.socksocket(socket_module.AF_INET, socket_module.SOCK_STREAM)
+    s.set_proxy(_socks.SOCKS5, proxy_addr[0], proxy_addr[1], rdns=True)
+    if timeout:
+        s.settimeout(timeout)
+
+    try:
+        # SOCKS5 握手 + CONNECT 到 DNS 服务器
+        s.connect((where, port))
+
+        # DNS-over-TCP: 2 字节长度前缀 + DNS 报文
+        wire = q.to_wire()
+        s.sendall(struct.pack('!H', len(wire)) + wire)
+
+        # 接收响应长度
+        resp_len_data = s.recv(2)
+        resp_len = struct.unpack('!H', resp_len_data)[0]
+
+        # 接收响应
+        resp_data = b''
+        while len(resp_data) < resp_len:
+            chunk = s.recv(resp_len - len(resp_data))
+            if not chunk:
+                break
+            resp_data += chunk
+
+        return dns.message.from_wire(resp_data, one_rr_per_rrset=one_rr_per_rrset,
+                                     ignore_trailing=ignore_trailing,
+                                     keyring=q.keyring)
+
+    finally:
+        s.close()
+
+
+def init_dns_proxy(proxy_pool: list = None):
+    """
+    初始化 SOCKS5 DNS 代理
+
+    替换 dns.query.tcp 为 SOCKS5 代理版本。
+    SOCKS5 UDP ASSOCIATE 在不同实现中不可靠，因此强制 TCP 模式。
+
+    :param list proxy_pool: 代理池列表（含 socks5:// 或 socks5h:// 前缀的地址）
+    """
+    global _socks5_enabled, _socks5_proxies
+
+    if not proxy_pool:
+        _socks5_enabled = False
+        _socks5_proxies = []
+        dns.query.tcp = _orig_tcp
+        logger.debug('DNS 代理未启用（代理池为空）')
+        return
+
+    socks5_list = []
+    for addr in proxy_pool:
+        if isinstance(addr, str) and addr.strip():
+            addr = addr.strip()
+            if addr.startswith('socks5://') or addr.startswith('socks5h://'):
+                parsed = urlparse(addr)
+                hostname = parsed.hostname
+                port = parsed.port or 1080
+                if hostname:
+                    socks5_list.append((hostname, port))
+
+    if not socks5_list:
+        _socks5_enabled = False
+        _socks5_proxies = []
+        dns.query.tcp = _orig_tcp
+        logger.debug('DNS 代理未启用（未配置 SOCKS5 代理）')
+        return
+
+    _socks5_enabled = True
+    _socks5_proxies = socks5_list
+    dns.query.tcp = _socks5_tcp
+    logger.info(f'DNS SOCKS5 代理已启用: {len(socks5_list)} 个代理，强制 TCP 模式')
+
+
+def is_socks5_dns_enabled() -> bool:
+    """
+    检查是否已启用 SOCKS5 DNS 代理
+
+    :return: 是否启用
+    """
+    return _socks5_enabled
 
 
 def set_resolve_config(config: dict):
@@ -84,7 +201,8 @@ def resolve_domain(subdomain: str, nameservers: List[str] = None) -> Optional[Di
     resolver.lifetime = 10
 
     try:
-        a_records = resolver.resolve(subdomain, 'A')
+        # SOCKS5 必须使用 TCP 模式（UDP ASSOCIATE 在不同实现中不可靠）
+        a_records = resolver.resolve(subdomain, 'A', tcp=_socks5_enabled)
         ips = [str(rdata) for rdata in a_records]
         info['resolve'] = 1
         info['alive'] = 1
@@ -92,7 +210,7 @@ def resolve_domain(subdomain: str, nameservers: List[str] = None) -> Optional[Di
         info['reason'] = 'OK'
 
         try:
-            cname_records = resolver.resolve(subdomain, 'CNAME')
+            cname_records = resolver.resolve(subdomain, 'CNAME', tcp=_socks5_enabled)
             cnames = [str(rdata) for rdata in cname_records]
             info['cname'] = ','.join(cnames)
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers):

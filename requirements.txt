@@ -13,6 +13,9 @@ pydantic-settings>=2.0.0
 # Playwright 浏览器自动化（Google/Yahoo 搜索模块需要）
 playwright>=1.40.0
 
+# PySocks SOCKS5 代理（DNS 代理 / SOCKS5 支持）
+pysocks>=1.7.1
+
 # Shodan API（shodan 搜索引擎模块需要）
 shodan>=1.30.0
 

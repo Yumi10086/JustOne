@@ -69,6 +69,7 @@ from modules.export import export_subdomains, export_results
 from modules.takeover import takeover_run
 from common.domain import Domain
 from common import utils
+from common import resolve
 
 # 初始化全局 HTTP 配置（代理等）
 utils.set_http_config(
@@ -78,6 +79,9 @@ utils.set_http_config(
     proxy_enable=settings.proxy_enable,
     proxy_pool=settings.get_proxy_list(),
 )
+
+# 初始化 SOCKS5 DNS 代理（使 DNS 爆破等走代理绕过 GFW 污染）
+resolve.init_dns_proxy(settings.get_proxy_list())
 
 
 __version__ = "1.0.0"
