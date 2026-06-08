@@ -211,7 +211,3 @@ pytest -k "test_dnssec"         # 按关键字过滤
 
 本项目的模块架构和收集思路参考了 [OneForAll](https://github.com/shmilylty/OneForAll) — 一个优秀的子域名收集工具。
 
-## 许可
-
-MIT
-
