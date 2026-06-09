@@ -228,9 +228,11 @@ def check(
     dns_only: bool = typer.Option(False, "--dns", help="仅执行 DNS 检查"),
     dns_security: bool = typer.Option(False, "--dns-security", "--dnssec", help="执行 DNS 安全检测（DNSSEC/投毒/劫持）"),
     cdn_check: bool = typer.Option(False, "--cdn", help="执行 CDN 识别"),
-    input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="子域名列表文件（每行一个子域名）"),
+    input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="子域名列表文件（每行一个子域名，支持 CSV/TXT）"),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径"),
     format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
+    dns_concurrent: int = typer.Option(200, "--dns-concurrent", "-dc", help="DNS 解析并发数（默认 200）"),
+    cdn_concurrent: int = typer.Option(100, "--cdn-concurrent", "-cc", help="CDN 识别并发数（默认 100）"),
 ):
     """
     检查子域名存活状态
@@ -256,12 +258,35 @@ def check(
         if not input_file.exists():
             console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
             raise typer.Exit(1)
+
+        import csv as csv_module
         with open(input_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    subdomains.add(line)
+            first_line = f.readline().strip()
+            f.seek(0)
+
+            # 检测文件格式：CSV（含逗号）或纯文本（每行一个子域名）
+            if ',' in first_line:
+                reader = csv_module.DictReader(f)
+                for row in reader:
+                    # 尝试 subdomain / domain / url / host 等常见列名
+                    sub = row.get('subdomain') or row.get('domain') or row.get('url') or row.get('host')
+                    if sub:
+                        sub = sub.strip()
+                        if sub and not sub.startswith('#'):
+                            subdomains.add(sub)
+            else:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        subdomains.add(line)
+
         main_domain = None
+        # -i 模式：从第一个子域名提取注册域名，供 DNSSEC/CDN 检测使用
+        if subdomains:
+            first = next(iter(subdomains))
+            extracted = Domain(first).registered()
+            if extracted:
+                main_domain = extracted
         console.print(f"[bold cyan]从文件加载 {len(subdomains)} 个子域名[/bold cyan]")
     elif target:
         domain_obj = Domain(target)
@@ -292,7 +317,7 @@ def check(
         raise typer.Exit(1)
 
     if dns_only:
-        checker = DNSCheck(main_domain or "unknown")
+        checker = DNSCheck(main_domain or "unknown", concurrent=dns_concurrent)
         results = checker.run(subdomains, show_progress=True)
     else:
         checker = AsyncHTTPCheck(main_domain or "unknown", concurrent=100)
@@ -302,7 +327,7 @@ def check(
     if cdn_check and results:
         alive_subdomains = {r['subdomain'] for r in results}
         console.print("[cyan]执行 CDN 识别...[/cyan]")
-        cdn = CDNCheck(main_domain or "unknown")
+        cdn = CDNCheck(main_domain or "unknown", concurrent=cdn_concurrent)
         cdn_results = cdn.run(alive_subdomains)
         cdn_count = sum(1 for r in cdn_results if r['cdn'])
         console.print(f"[cyan]CDN 识别完成: {cdn_count}/{len(cdn_results)} 使用 CDN[/cyan]")
@@ -310,7 +335,7 @@ def check(
             if r['cdn']:
                 console.print(f"  [dim]{r['subdomain']}: CDN ({r.get('cdn_provider', 'unknown')})[/dim]")
 
-    if dns_security and target:
+    if dns_security and main_domain:
         console.print(f"\n[bold cyan]DNS 安全检测: {main_domain}[/bold cyan]")
         security = DNSSecurityCheck(main_domain)
         security_results = security.run()

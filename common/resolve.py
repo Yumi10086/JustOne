@@ -30,13 +30,25 @@ resolve_config = {
 }
 
 
+_socks5_fallback_warned = False
+
+
+def _warn_socks5_fallback():
+    """SOCKS5 代理不可用时，仅警告一次"""
+    global _socks5_fallback_warned
+    if not _socks5_fallback_warned:
+        _socks5_fallback_warned = True
+        logger.warning('SOCKS5 DNS 代理不可用，已自动回退直连 DNS')
+
+
 def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
                 one_rr_per_rrset=False, ignore_trailing=False, sock=None):
     """
-    SOCKS5 代理版 dns.query.tcp
+    SOCKS5 代理版 dns.query.tcp（代理优先，失败回退直连）
 
-    完全接管 DNS-over-TCP 流程：创建 PySocks socksocket → SOCKS5 握手 → 发送 DNS 查询 → 接收响应。
-    不依赖 dnspython 内部的 make_socket / _connect，避免版本兼容问题。
+    先尝试通过 SOCKS5 代理连接 DNS 服务器进行 DNS-over-TCP 查询，
+    如果代理不可用（连接超时/拒绝），自动回退到直连 DNS。
+    回退仅警告一次，避免日志刷屏。
 
     :param q: dns.message.Message，要发送的 DNS 查询
     :param where: str，DNS 服务器地址
@@ -47,7 +59,6 @@ def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
     import socks as _socks
     import dns.message
     import struct
-    import time as _time
 
     proxy_addr = random.choice(_socks5_proxies)
 
@@ -79,6 +90,14 @@ def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
         return dns.message.from_wire(resp_data, one_rr_per_rrset=one_rr_per_rrset,
                                      ignore_trailing=ignore_trailing,
                                      keyring=q.keyring)
+
+    except (OSError, _socks.ProxyConnectionError, _socks.GeneralProxyError):
+        # 代理不可用（超时/拒绝/未运行），回退直连 DNS
+        _warn_socks5_fallback()
+        return _orig_tcp(q, where, timeout=timeout, port=port,
+                         source=source, source_port=source_port,
+                         one_rr_per_rrset=one_rr_per_rrset,
+                         ignore_trailing=ignore_trailing)
 
     finally:
         s.close()

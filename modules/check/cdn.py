@@ -9,6 +9,7 @@ import json
 import ipaddress
 from pathlib import Path
 from typing import Optional, Set, Dict, Any, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import dns.resolver
 
@@ -25,18 +26,22 @@ class CDNCheck(Module):
     支持检测方式:
     - CNAME 关键字匹配: 检查 DNS CNAME 记录是否包含已知 CDN 特征
     - IP CIDR 匹配: 检查解析 IP 是否落在已知 CDN 地址段内
+
+    检测采用 ThreadPoolExecutor 并发执行，可通过 concurrent 参数控制并发数。
     """
 
-    def __init__(self, domain: str, config: Optional[dict] = None):
+    def __init__(self, domain: str, config: Optional[dict] = None, concurrent: int = 100):
         """
         初始化 CDN 检查模块
 
         :param str domain: 目标域名
         :param dict config: 可选配置字典
+        :param int concurrent: CDN 检测并发数，默认 100
         """
         super().__init__(domain, config)
         self.module = 'CDNCheck'
         self.source = 'cdn_check'
+        self.concurrent = concurrent
         self.cdn_cnames: Dict[str, str] = {}
         self.cdn_ip_ranges: List[ipaddress.IPv4Network] = []
         self._load_cdn_data()
@@ -125,7 +130,10 @@ class CDNCheck(Module):
 
     def run(self, subdomains: Optional[Set[str]] = None) -> List[Dict[str, Any]]:
         """
-        执行 CDN 识别
+        执行 CDN 识别（并发版本）
+
+        使用 ThreadPoolExecutor 并发检测，大幅提升批量检查速度。
+        并发数可通过 __init__ 的 concurrent 参数配置，默认 100。
 
         :param Set[str] subdomains: 要检查的子域名集合，默认使用 self.subdomains
         :return: CDN 检测结果列表
@@ -138,16 +146,33 @@ class CDNCheck(Module):
         self.subdomains = target
         self.begin()
 
-        results = []
-        for s in sorted(target):
-            r = self.check(s)
-            results.append(r)
-            if r['cdn']:
-                self.infos[s] = r
+        candidates = sorted(target)
+        total = len(candidates)
+        workers = min(self.concurrent, total) if total > 0 else 1
 
-        logger.info(f'CDN 识别完成: {sum(1 for r in results if r["cdn"])}/{len(results)} 使用 CDN')
+        results: List[Dict[str, Any]] = []
+        cdn_count = 0
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(self.check, s): s for s in candidates}
+            for future in as_completed(futures):
+                r = future.result()
+                results.append(r)
+                if r['cdn']:
+                    cdn_count += 1
+                    self.infos[r['subdomain']] = r
+
+        # 按原始排序恢复顺序
+        results.sort(key=lambda x: candidates.index(x['subdomain'])
+                     if x['subdomain'] in candidates else total)
 
         self.finish()
+
+        logger.info(
+            f'CDN 识别完成: {cdn_count}/{total} 使用 CDN，'
+            f'并发数 {workers}，耗时 {self.elapse:.1f}s'
+        )
+
         return results
 
 
