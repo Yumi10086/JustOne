@@ -5,6 +5,7 @@ DNS 解析模块
 import json
 import random
 import socket as socket_module
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Callable
 from urllib.parse import urlparse
@@ -30,6 +31,9 @@ resolve_config = {
 }
 
 
+# SOCKS5 并发连接控制：防止大量并发连接淹没代理服务器
+_socks5_semaphore = threading.Semaphore(32)
+
 _socks5_fallback_warned = False
 
 
@@ -50,6 +54,8 @@ def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
     如果代理不可用（连接超时/拒绝），自动回退到直连 DNS。
     回退仅警告一次，避免日志刷屏。
 
+    SOCKS5 连接受 _socks5_semaphore 限制，防止大量并发淹没代理。
+
     :param q: dns.message.Message，要发送的 DNS 查询
     :param where: str，DNS 服务器地址
     :param timeout: float，超时秒数
@@ -60,47 +66,58 @@ def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
     import dns.message
     import struct
 
-    proxy_addr = random.choice(_socks5_proxies)
+    with _socks5_semaphore:
+        proxy_addr = random.choice(_socks5_proxies)
 
-    s = _socks.socksocket(socket_module.AF_INET, socket_module.SOCK_STREAM)
-    s.set_proxy(_socks.SOCKS5, proxy_addr[0], proxy_addr[1], rdns=True)
-    if timeout:
-        s.settimeout(timeout)
+        s = _socks.socksocket(socket_module.AF_INET, socket_module.SOCK_STREAM)
+        s.set_proxy(_socks.SOCKS5, proxy_addr[0], proxy_addr[1], rdns=True)
+        if timeout:
+            s.settimeout(timeout)
 
-    try:
-        # SOCKS5 握手 + CONNECT 到 DNS 服务器
-        s.connect((where, port))
+        try:
+            # SOCKS5 握手 + CONNECT 到 DNS 服务器
+            s.connect((where, port))
 
-        # DNS-over-TCP: 2 字节长度前缀 + DNS 报文
-        wire = q.to_wire()
-        s.sendall(struct.pack('!H', len(wire)) + wire)
+            # DNS-over-TCP: 2 字节长度前缀 + DNS 报文
+            wire = q.to_wire()
+            s.sendall(struct.pack('!H', len(wire)) + wire)
 
-        # 接收响应长度
-        resp_len_data = s.recv(2)
-        resp_len = struct.unpack('!H', resp_len_data)[0]
+            # 接收响应长度
+            resp_len_data = s.recv(2)
+            resp_len = struct.unpack('!H', resp_len_data)[0]
 
-        # 接收响应
-        resp_data = b''
-        while len(resp_data) < resp_len:
-            chunk = s.recv(resp_len - len(resp_data))
-            if not chunk:
-                break
-            resp_data += chunk
+            # 接收响应
+            resp_data = b''
+            while len(resp_data) < resp_len:
+                chunk = s.recv(resp_len - len(resp_data))
+                if not chunk:
+                    break
+                resp_data += chunk
 
-        return dns.message.from_wire(resp_data, one_rr_per_rrset=one_rr_per_rrset,
-                                     ignore_trailing=ignore_trailing,
-                                     keyring=q.keyring)
+            return dns.message.from_wire(resp_data, one_rr_per_rrset=one_rr_per_rrset,
+                                         ignore_trailing=ignore_trailing,
+                                         keyring=q.keyring)
 
-    except (OSError, _socks.ProxyConnectionError, _socks.GeneralProxyError):
-        # 代理不可用（超时/拒绝/未运行），回退直连 DNS
-        _warn_socks5_fallback()
-        return _orig_tcp(q, where, timeout=timeout, port=port,
-                         source=source, source_port=source_port,
-                         one_rr_per_rrset=one_rr_per_rrset,
-                         ignore_trailing=ignore_trailing)
+        except (_socks.ProxyConnectionError, _socks.GeneralProxyError,
+                        ConnectionRefusedError) as e:
+            # 代理不可用（SOCKS5 握手失败/连接被拒/未运行），回退直连并警告
+            logger.debug(f'SOCKS5 DNS 代理异常 ({type(e).__name__}): {e}')
+            _warn_socks5_fallback()
+        except (socket_module.timeout, TimeoutError) as e:
+            # DNS 查询超时（非代理故障），静默回退直连 DNS
+            logger.debug(f'SOCKS5 DNS 查询超时 ({type(e).__name__}): {e}')
+        except OSError as e:
+            # 其他网络错误（连接重置等），静默回退直连 DNS
+            logger.debug(f'SOCKS5 DNS 网络错误 ({type(e).__name__}): {e}')
 
-    finally:
-        s.close()
+        finally:
+            s.close()
+
+    # 回退直连 DNS（在信号量外部执行，不占用 SOCKS5 槽位）
+    return _orig_tcp(q, where, timeout=timeout, port=port,
+                     source=source, source_port=source_port,
+                     one_rr_per_rrset=one_rr_per_rrset,
+                     ignore_trailing=ignore_trailing)
 
 
 def init_dns_proxy(proxy_pool: list = None):
