@@ -693,18 +693,31 @@ def _convert_playwright_proxy(proxy):
     """
     将 requests 格式的代理转换为 Playwright 格式
 
+    注意：socks5:// 会自动转为 socks5h://，确保 Chromium 通过代理端做 DNS 解析，
+    避免本地 DNS 污染导致 google.com/yahoo.com 等境外站点超时。
+
     :param proxy: 代理配置（requests 格式或 Playwright 格式）
     :return: Playwright 代理字典
     """
     if not proxy:
         return None
     if isinstance(proxy, dict) and 'server' in proxy:
-        return proxy
+        server = proxy['server']
+        if server.startswith('socks5://'):
+            server = server.replace('socks5://', 'socks5h://', 1)
+        # 保留其他字段（username, password, bypass 等）
+        result = {'server': server}
+        result.update({k: v for k, v in proxy.items() if k != 'server'})
+        return result
     if isinstance(proxy, dict):
         server = proxy.get('http') or proxy.get('https') or ''
         if server:
+            if server.startswith('socks5://'):
+                server = server.replace('socks5://', 'socks5h://', 1)
             return {'server': server}
     if isinstance(proxy, str):
+        if proxy.startswith('socks5://'):
+            proxy = proxy.replace('socks5://', 'socks5h://', 1)
         return {'server': proxy}
     return None
 

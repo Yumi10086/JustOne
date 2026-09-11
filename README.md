@@ -10,6 +10,7 @@
 - **信息丰富** — 对已有结果补全 DNS 解析、HTTP 探测、CDN 识别、IP 地理/ASN 信息
 - **DNS 爆破** — 高并发词表爆破，递归深度扩展
 - **子域置换** — 基于已有子域名生成变异候选（前缀/后缀/数字/连字符插入）
+- **泛解析检测** — 多随机标签探测 wildcard DNS，自动过滤爆破/置换/收集结果的假阳性（可选同 /24 网段匹配）
 - **存活验证** — HTTP 异步批量检查 / DNS 并发解析（ThreadPool 200 并发）
 - **DNS 安全检测** — DNSSEC 状态、多解析器一致性对比（投毒/劫持检测）
 - **接管检测** — DNS CNAME + HTTP 指纹双确认，预装 15 种服务指纹
@@ -69,6 +70,11 @@ python justone.py brute example.com
 python justone.py brute example.com -w wordlist.txt -c 1000
 ```
 
+> 递归爆破（`BRUTE_RECURSIVE=true`）会对每一层命中的子域名继续套用整份字典，开销随"命中数 × 字典大小 × 深度"放大。
+> 内置保护：`BRUTE_RECURSIVE_MAX_FANOUT`（每层最多对多少个子域名继续递归，默认 10，0 表示不限）、
+> `BRUTE_RECURSIVE_MAX_CANDIDATES`（整个递归树的候选总量上限，默认 100000）。
+> 默认字典约 9.5 万条，开启递归时建议改用小字典（如 `data/subnames_next.txt`）。
+
 ### 子域置换扩展
 
 ```bash
@@ -81,6 +87,27 @@ python justone.py altdns example.com -i subdomains.txt
 # 禁用特定置换规则
 python justone.py altdns example.com -i subs.txt --no-number --no-insert
 ```
+
+### 泛解析检测
+
+泛解析（Wildcard DNS，`*.域名` 对任意子域名都返回解析结果）会让爆破/置换/收集产生大量假阳性。
+JustOne 使用多随机标签探测，并自动过滤解析到泛解析 IP / CNAME 的结果：
+
+```bash
+# 默认启用（main / brute / altdns 均生效）
+python justone.py main example.com
+python justone.py brute example.com
+python justone.py altdns example.com
+
+# 关闭泛解析检测与过滤
+python justone.py main example.com --no-wildcard
+python justone.py brute example.com --no-wildcard
+
+# 应对轮换 IP 的泛解析：额外按同 /24 网段匹配
+python justone.py main example.com --wildcard-cidr
+```
+
+可在 `config/.env` 中调整：`WILDCARD_PROBES`（探测次数，默认 3）、`WILDCARD_CIDR`（默认 false）。
 
 ### 存活检查 & DNS 安全检测
 
@@ -114,6 +141,10 @@ python justone.py check -i results/collect_example.com.csv --dns
 | `-i`, `--input` | 输入文件（支持 CSV / TXT） | — |
 | `-dc`, `--dns-concurrent` | DNS 解析并发数 | 200 |
 | `-cc`, `--cdn-concurrent` | CDN 识别并发数 | 100 |
+| `--no-wildcard` | 关闭泛解析检测与排除 | 开启 |
+| `--wildcard-cidr` | 泛解析按同 /24 网段匹配 | 关闭 |
+
+> `check` 默认**先做泛解析检测并排除全部泛解析域名**，再执行存活检查，避免 `*.域名` 造成的假阳性。
 
 ### 子域信息丰富
 

@@ -23,11 +23,13 @@ JustOne - 子域名收集工具
     python justone.py altdns example.com --no-number     # 禁用数字追加置换规则
 
 四、检查存活状态 & DNS安全
-    python justone.py check example.com                  # HTTP 存活检查
+    python justone.py check example.com                  # HTTP 存活检查（默认排除泛解析域名）
     python justone.py check example.com --dns            # 仅 DNS 检查
     python justone.py check example.com --dns-security   # 执行 DNS 安全检测（DNSSEC/投毒/劫持）
     python justone.py check -i subdomains.txt             # 从文件批量检查
     python justone.py check -i subdomains.txt -f txt     # 指定输出格式
+    python justone.py check example.com --no-wildcard    # 关闭泛解析检测与排除
+    python justone.py check example.com --wildcard-cidr  # 泛解析按同 /24 网段匹配
 
 五、子域接管检测
     python justone.py takeover example.com                # 检测子域名接管风险
@@ -44,7 +46,15 @@ JustOne - 子域名收集工具
     #   check 命令   -> results/check_域名.csv
     #   takeover 命令 -> results/takeover_域名.csv
 
-七、其他
+七、泛解析（Wildcard DNS）
+    多随机标签探测 *.域名 是否存在泛解析，并过滤解析到泛解析 IP/CNAME 的假阳性结果。
+    main / brute / altdns 均默认启用，可用 --no-wildcard 关闭：
+        python justone.py main example.com --no-wildcard        # 禁用泛解析检测与过滤
+        python justone.py main example.com --wildcard-cidr      # 泛解析按同 /24 网段匹配（应对轮换 IP）
+        python justone.py brute example.com --no-wildcard
+        python justone.py altdns example.com --wildcard-cidr
+
+八、其他
     python justone.py --version                          # 查看版本
     python justone.py --help                             # 查看帮助
     python justone.py main --help                        # 查看 main 命令帮助
@@ -61,9 +71,9 @@ from rich.console import Console
 
 from config.logging import init_logging
 from config.settings import settings
-from modules.collect import Collect
-from modules.brute import Brute
-from modules.altdns import Altdns
+from modules.collect import Collect, set_collect_config
+from modules.brute import Brute, set_brute_config
+from modules.altdns import Altdns, set_altdns_config
 from modules.enrich import Enrich
 from modules.export import export_subdomains, export_results
 from modules.takeover import takeover_run
@@ -82,6 +92,30 @@ utils.set_http_config(
 
 # 初始化 SOCKS5 DNS 代理（使 DNS 爆破等走代理绕过 GFW 污染）
 resolve.init_dns_proxy(settings.get_proxy_list())
+
+# 将 settings 中的配置注入各模块全局配置（泛解析检测/过滤等）
+set_brute_config({
+    'concurrent': settings.brute_concurrent,
+    'recursive': settings.brute_recursive,
+    'recursive_depth': settings.brute_recursive_depth,
+    'recursive_max_fanout': settings.brute_recursive_max_fanout,
+    'recursive_max_candidates': settings.brute_recursive_max_candidates,
+    'wildcard_check': settings.brute_wildcard_check,
+    'wildcard_deal': settings.brute_wildcard_deal,
+    'wildcard_probes': settings.wildcard_probes,
+    'wildcard_cidr': settings.wildcard_cidr,
+})
+set_altdns_config({
+    'wildcard_check': settings.brute_wildcard_check,
+    'wildcard_deal': settings.brute_wildcard_deal,
+    'wildcard_probes': settings.wildcard_probes,
+    'wildcard_cidr': settings.wildcard_cidr,
+})
+set_collect_config({
+    'wildcard_filter': settings.brute_wildcard_check,
+    'wildcard_probes': settings.wildcard_probes,
+    'wildcard_cidr': settings.wildcard_cidr,
+})
 
 
 __version__ = "1.0.0"
@@ -130,6 +164,8 @@ def main(
     disable_cert: bool = typer.Option(False, "--no-cert", help="禁用证书查询模块"),
     disable_dataset: bool = typer.Option(False, "--no-dataset", help="禁用数据集模块"),
     altdns: bool = typer.Option(True, "--altdns/--no-altdns", help="启用子域置换模块"),
+    no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
+    wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
     """
@@ -161,6 +197,16 @@ def main(
         'save_module_result': False,
         'proxy_enable': settings.proxy_enable,
         'LEAKIX_API': settings.leakix_api,
+        'wildcard_filter': not no_wildcard,
+        'wildcard_probes': settings.wildcard_probes,
+        'wildcard_cidr': wildcard_cidr,
+    }
+
+    wildcard_config = {
+        'wildcard_check': not no_wildcard,
+        'wildcard_deal': not no_wildcard,
+        'wildcard_probes': settings.wildcard_probes,
+        'wildcard_cidr': wildcard_cidr,
     }
 
     subdomains = set()
@@ -188,7 +234,7 @@ def main(
         start = time.time()
         sys.stdout.write('  执行爆破模块... ')
         sys.stdout.flush()
-        brute_module = Brute(main_domain)
+        brute_module = Brute(main_domain, wildcard_config)
         brute_subdomains = brute_module.run()
         subdomains.update(brute_subdomains)
         total_elapse += brute_module.get_elapse() or 0
@@ -199,7 +245,7 @@ def main(
         start = time.time()
         sys.stdout.write('  执行子域置换... ')
         sys.stdout.flush()
-        altdns_module = Altdns(main_domain, subdomains)
+        altdns_module = Altdns(main_domain, subdomains, wildcard_config)
         altdns_subdomains = altdns_module.run()
         subdomains.update(altdns_subdomains)
         total_elapse += altdns_module.get_elapse() or 0
@@ -233,15 +279,21 @@ def check(
     format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
     dns_concurrent: int = typer.Option(200, "--dns-concurrent", "-dc", help="DNS 解析并发数（默认 200）"),
     cdn_concurrent: int = typer.Option(100, "--cdn-concurrent", "-cc", help="CDN 识别并发数（默认 100）"),
+    no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
+    wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
 ):
     """
     检查子域名存活状态
+
+    默认先做泛解析检测，将解析到泛解析 IP/CNAME 的子域名全部排除，
+    再执行存活检查，避免泛解析造成的大量假阳性。
 
     示例:
         python justone.py check example.com                    # 检查一个域名
         python justone.py check example.com --dns              # 仅 DNS 检查
         python justone.py check example.com --dns-security     # DNS 安全检测
         python justone.py check -i subdomains.txt -o results   # 从文件批量检查
+        python justone.py check example.com --no-wildcard      # 关闭泛解析排除
     """
     from modules.check import DNSCheck, HTTPCheck
     from modules.check.http import AsyncHTTPCheck
@@ -316,6 +368,27 @@ def check(
         console.print("[bold red]错误: 请指定目标域名或使用 -i 指定输入文件[/bold red]")
         raise typer.Exit(1)
 
+    # 泛解析过滤：排除解析到泛解析 IP/CNAME 的子域名（避免存活检查假阳性）
+    if not no_wildcard and main_domain and subdomains:
+        from common.wildcard import detect_and_filter
+        console.print("[cyan]检测泛解析...[/cyan]")
+        kept, removed, wc_info = detect_and_filter(
+            subdomains,
+            main_domain,
+            probes=settings.wildcard_probes,
+            concurrent=min(dns_concurrent, 100),
+            include_cidr=wildcard_cidr,
+        )
+        if wc_info.detected:
+            targets = ', '.join(sorted(wc_info.ips)) or ', '.join(sorted(wc_info.cnames)) or 'unknown'
+            console.print(
+                f"[yellow]检测到泛解析[/yellow]（{targets}），"
+                f"已排除 [red]{len(removed)}[/red] 个泛解析域名，剩余 {len(kept)} 个"
+            )
+            subdomains = kept
+        else:
+            console.print("[dim]未检测到泛解析[/dim]")
+
     if dns_only:
         checker = DNSCheck(main_domain or "unknown", concurrent=dns_concurrent)
         results = checker.run(subdomains, show_progress=True)
@@ -379,6 +452,8 @@ def brute(
     format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
     wordlist: Optional[Path] = typer.Option(None, "--wordlist", "-w", help="爆破字典路径"),
     concurrent: int = typer.Option(2000, "--concurrent", "-c", help="并发数"),
+    no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
+    wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
 ):
     """
     仅执行爆破模块
@@ -397,6 +472,10 @@ def brute(
     config = {
         'concurrent': concurrent,
         'wordlist': str(wordlist) if wordlist else None,
+        'wildcard_check': not no_wildcard,
+        'wildcard_deal': not no_wildcard,
+        'wildcard_probes': settings.wildcard_probes,
+        'wildcard_cidr': wildcard_cidr,
     }
 
     brute_module = Brute(main_domain, config)
@@ -427,6 +506,8 @@ def altdns(
     no_suffix: bool = typer.Option(False, "--no-suffix", help="禁用后缀置换"),
     no_number: bool = typer.Option(False, "--no-number", help="禁用数字追加置换"),
     no_insert: bool = typer.Option(False, "--no-insert", help="禁用连字符插入置换"),
+    no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
+    wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
 ):
     """
     对已有子域名进行置换扩展
@@ -442,6 +523,13 @@ def altdns(
 
     subdomains: Set[str] = set()
     main_domain = Domain(target).registered()
+
+    wildcard_config = {
+        'wildcard_check': not no_wildcard,
+        'wildcard_deal': not no_wildcard,
+        'wildcard_probes': settings.wildcard_probes,
+        'wildcard_cidr': wildcard_cidr,
+    }
 
     if input_file:
         if not input_file.exists():
@@ -466,12 +554,19 @@ def altdns(
         console.print(f"[bold cyan]注册域名: {main_domain}[/bold cyan]")
 
         console.print(f"[cyan]执行信息收集...[/cyan]")
-        collect = Collect(main_domain, {'enable_search': True, 'enable_certificate': True, 'enable_dataset': True})
+        collect = Collect(main_domain, {
+            'enable_search': True,
+            'enable_certificate': True,
+            'enable_dataset': True,
+            'wildcard_filter': not no_wildcard,
+            'wildcard_probes': settings.wildcard_probes,
+            'wildcard_cidr': wildcard_cidr,
+        })
         subdomains = set(collect.run())
         console.print(f"[dim]收集到 {len(subdomains)} 个子域名[/dim]")
 
         console.print(f"[cyan]执行爆破...[/cyan]")
-        brute_module = Brute(main_domain)
+        brute_module = Brute(main_domain, wildcard_config)
         brute_subdomains = brute_module.run()
         subdomains.update(brute_subdomains)
         console.print(f"[dim]爆破发现 {len(brute_subdomains)} 个，共 {len(subdomains)} 个已知子域名[/dim]")
@@ -487,6 +582,7 @@ def altdns(
         'number': not no_number,
         'insert': not no_insert,
     }
+    config.update(wildcard_config)
     if wordlist:
         config['wordlist'] = str(wordlist)
 
@@ -516,6 +612,7 @@ def takeover(
     concurrent: int = typer.Option(20, "--concurrent", "-c", help="并发数"),
     fingerprint_file: Optional[Path] = typer.Option(None, "--fingerprint-file", help="自定义接管指纹文件路径"),
     skip_brute: bool = typer.Option(False, "--skip-brute", help="跳过爆破阶段（仅从收集模块获取子域名）"),
+    no_pre_check: bool = typer.Option(False, "--no-pre-check", help="跳过存活预检（直接对所有子域名做 CNAME 接管检测）"),
     no_progress: bool = typer.Option(False, "--no-progress", help="隐藏进度条"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
@@ -541,11 +638,32 @@ def takeover(
         if not input_file.exists():
             console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
             raise typer.Exit(1)
+        import csv as _csv
         with open(input_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    subdomains.add(line)
+            # 先探一行判断是否为 CSV 多列格式
+            first_line = f.readline()
+            f.seek(0)
+            has_commas = ',' in (first_line or '')
+            if has_commas:
+                reader = _csv.reader(f)
+                header_skipped = False
+                for row in reader:
+                    if not row or not row[0].strip():
+                        continue
+                    # 跳过表头行（heuristic：第一列看起来像表头关键词）
+                    if not header_skipped and row[0].strip().lower() in (
+                        'subdomain', 'domain', 'host', 'hostname', 'url',
+                    ):
+                        header_skipped = True
+                        continue
+                    header_skipped = True
+                    subdomains.add(row[0].strip())
+            else:
+                # 纯文本：每行一个子域名
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        subdomains.add(line)
         console.print(f"[bold cyan]从文件加载 {len(subdomains)} 个子域名[/bold cyan]")
     elif target:
         domain_obj = Domain(target)
@@ -583,6 +701,7 @@ def takeover(
     config = {
         'concurrent': concurrent,
         'show_progress': not no_progress,
+        'pre_check': not no_pre_check,
     }
     if fingerprint_file:
         config['fingerprint_file'] = str(fingerprint_file)
@@ -593,11 +712,15 @@ def takeover(
     vulnerable = [r for r in results if r['status'] == 'vulnerable']
     likely = [r for r in results if r['status'] == 'likely']
     errors = [r for r in results if r['status'] == 'error']
+    dead = [r for r in results if r.get('detail', {}).get('pre_check') == 'dead']
+    safe = len(results) - len(vulnerable) - len(likely) - len(errors) - len(dead)
 
     console.print(f"\n[bold]检测完成:[/bold]")
+    if dead:
+        console.print(f"  [dim]存活预检: {len(subdomains)} → {len(subdomains) - len(dead)} 存活, {len(dead)} 已死（跳过接管检测）[/dim]")
     console.print(f"  [bold red]可接管: {len(vulnerable)}[/bold red]")
     console.print(f"  [bold yellow]可疑: {len(likely)}[/bold yellow]")
-    console.print(f"  [dim]安全: {len(results) - len(vulnerable) - len(likely) - len(errors)}[/dim]")
+    console.print(f"  [dim]安全: {safe}[/dim]")
     console.print(f"  [dim]错误: {len(errors)}[/dim]")
 
     if vulnerable:

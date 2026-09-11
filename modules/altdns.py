@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 from config.logging import logger
 from common import resolve
+from common.wildcard import WildcardInfo, detect_wildcard
 
 
 altdns_config = {
@@ -23,6 +24,10 @@ altdns_config = {
     'suffix': True,
     'number': True,
     'insert': True,
+    'wildcard_check': True,
+    'wildcard_deal': True,
+    'wildcard_probes': 3,
+    'wildcard_cidr': False,
 }
 
 
@@ -57,9 +62,14 @@ class Altdns:
         self.enable_suffix = self.config.get('suffix', True)
         self.enable_number = self.config.get('number', True)
         self.enable_insert = self.config.get('insert', True)
+        self.wildcard_check = self.config.get('wildcard_check', altdns_config.get('wildcard_check', True))
+        self.wildcard_deal = self.config.get('wildcard_deal', altdns_config.get('wildcard_deal', True))
+        self.wildcard_probes = self.config.get('wildcard_probes', altdns_config.get('wildcard_probes', 3))
+        self.wildcard_cidr = self.config.get('wildcard_cidr', altdns_config.get('wildcard_cidr', False))
 
         self.new_subdomains: Set[str] = set()
         self.wordlist_lines: List[str] = []
+        self._wildcard_info: Optional[WildcardInfo] = None
 
         self.start_time = time.time()
         self.end_time = None
@@ -172,6 +182,9 @@ class Altdns:
             try:
                 info = resolve.resolve_domain(candidate)
                 if info and info.get('ip'):
+                    if (self.wildcard_deal and self._wildcard_info
+                            and self._wildcard_info.matches_record(info, include_cidr=self.wildcard_cidr)):
+                        return None
                     return candidate
             except Exception as e:
                 logger.debug(f'DNS 解析异常 {candidate}: {e}')
@@ -237,6 +250,11 @@ class Altdns:
         if not candidates:
             logger.info('未生成任何候选')
             return set()
+
+        if self.wildcard_check:
+            self._wildcard_info = detect_wildcard(self.domain, probes=self.wildcard_probes)
+            if self._wildcard_info.detected:
+                logger.info('检测到泛解析，将过滤泛解析候选')
 
         self.new_subdomains = self.resolve_batch(candidates, show_progress)
 

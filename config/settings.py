@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Optional, List
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def get_auto_thread_count() -> int:
@@ -86,10 +86,18 @@ class Settings(BaseSettings):
     brute_recursive: bool = False
     # 递归爆破深度
     brute_recursive_depth: int = 2
+    # 递归爆破扇出上限（每层最多对多少个子域名继续递归，0 表示不限制）
+    brute_recursive_max_fanout: int = 10
+    # 递归爆破候选总量上限（防止字典过大导致 DNS 查询爆炸）
+    brute_recursive_max_candidates: int = 100000
     # 开启泛解析检测
     brute_wildcard_check: bool = True
     # 开启泛解析处理
     brute_wildcard_deal: bool = True
+    # 泛解析探测次数（随机标签数量，越多越可靠越慢）
+    wildcard_probes: int = 3
+    # 泛解析过滤时启用同 /24 网段匹配（应对轮换 IP）
+    wildcard_cidr: bool = False
 
     # ==================== 信息收集模块配置 ====================
     # 启用信息收集模块
@@ -197,9 +205,10 @@ class Settings(BaseSettings):
             return get_auto_thread_count()
         return v
 
-    class Config:
-        env_file = "config/.env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file="config/.env",
+        env_file_encoding="utf-8",
+    )
 
 
 settings = Settings()
@@ -279,8 +288,12 @@ class ConfigManager:
             'concurrent': self._settings.brute_concurrent,
             'recursive': self._settings.brute_recursive,
             'recursive_depth': self._settings.brute_recursive_depth,
+            'recursive_max_fanout': self._settings.brute_recursive_max_fanout,
+            'recursive_max_candidates': self._settings.brute_recursive_max_candidates,
             'wildcard_check': self._settings.brute_wildcard_check,
             'wildcard_deal': self._settings.brute_wildcard_deal,
+            'wildcard_probes': self._settings.wildcard_probes,
+            'wildcard_cidr': self._settings.wildcard_cidr,
         }
 
 

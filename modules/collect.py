@@ -5,13 +5,13 @@
 
 import time
 import asyncio
+import functools
 import threading
-import uuid
 from typing import Optional, Set, List, Dict, Any, Type
 
 from config.logging import logger
 from common.domain import Domain
-from common import resolve
+from common.wildcard import WildcardInfo, detect_wildcard, filter_subdomains
 
 
 collect_config = {
@@ -30,6 +30,10 @@ collect_config = {
     },
     # 收集完成后对结果进行泛解析 DNS 过滤
     'wildcard_filter': True,
+    # 泛解析探测次数（随机标签数量）
+    'wildcard_probes': 3,
+    # 泛解析过滤时是否启用同 /24 网段匹配
+    'wildcard_cidr': False,
 }
 
 
@@ -63,7 +67,9 @@ class Collect:
         self.enable_dataset = self.config.get('enable_dataset', collect_config.get('enable_dataset', True))
         self.enable_intelligence = self.config.get('enable_intelligence', collect_config.get('enable_intelligence', True))
         self.wildcard_filter = self.config.get('wildcard_filter', collect_config.get('wildcard_filter', True))
-        self._wildcard_ip: Optional[str] = None
+        self.wildcard_probes = self.config.get('wildcard_probes', collect_config.get('wildcard_probes', 3))
+        self.wildcard_cidr = self.config.get('wildcard_cidr', collect_config.get('wildcard_cidr', False))
+        self._wildcard_info: Optional[WildcardInfo] = None
 
         self.domain_obj = Domain(domain)
         self.registered_domain = self.domain_obj.registered()
@@ -421,67 +427,58 @@ class Collect:
         self.modules_results[module_name] = subdomains
         logger.debug(f'{module_name} 模块发现 {new_count - old_count} 个新子域名')
 
-    async def _detect_wildcard_ip(self) -> Optional[str]:
+    async def _detect_wildcard(self) -> Optional[WildcardInfo]:
         """
-        检测目标域名是否存在泛解析，返回泛解析 IP。
+        检测目标域名是否存在泛解析
 
-        构造随机不存在的子域名进行 DNS 解析，
-        如果解析成功则说明存在泛解析，返回解析到的 IP。
-        :return: 泛解析 IP，未检测到返回 None
+        通过多随机标签探测，若存在泛解析则返回检测结果。
+        :return: 泛解析检测结果，未检测到返回 None
         """
-        prefix = f'_wc_{uuid.uuid4().hex[:12]}'
-        test_domain = f'{prefix}.{self.registered_domain}'
-        logger.debug(f'检测泛解析: {test_domain}')
-
         loop = asyncio.get_running_loop()
         info = await loop.run_in_executor(
-            None, resolve.resolve_domain, test_domain
+            None,
+            functools.partial(
+                detect_wildcard,
+                self.registered_domain,
+                probes=self.wildcard_probes,
+            ),
         )
-        if info and info.get('resolve') and info.get('ip'):
-            wildcard_ip = info['ip']
-            logger.warning(
-                f'检测到泛解析 — {test_domain} 解析到 {wildcard_ip}'
-            )
-            return wildcard_ip
+        if info and info.detected:
+            return info
         logger.debug('未检测到泛解析')
         return None
 
-    async def _filter_wildcard_subdomains(self, wildcard_ip: str) -> int:
+    async def _filter_wildcard_subdomains(self, info: WildcardInfo) -> int:
         """
-        并发解析所有已收集子域名，移除解析到泛解析 IP 的条目。
+        并发解析所有已收集子域名，移除属于泛解析的条目。
 
-        :param str wildcard_ip: 泛解析 IP 地址
+        :param WildcardInfo info: 泛解析检测结果
         :return: 被移除的子域名数量
         """
-        subdomains = list(self.subdomains)
-        total = len(subdomains)
-        logger.info(f'泛解析过滤: 检查 {total} 个子域名，目标 IP: {wildcard_ip}')
+        total = len(self.subdomains)
+        logger.info(f'泛解析过滤: 检查 {total} 个子域名，泛解析 IP: {sorted(info.ips)}')
 
         loop = asyncio.get_running_loop()
-        semaphore = asyncio.Semaphore(50)  # 限制并发 DNS 查询
+        kept, removed = await loop.run_in_executor(
+            None,
+            functools.partial(
+                filter_subdomains,
+                list(self.subdomains),
+                info,
+                concurrent=50,
+                include_cidr=self.wildcard_cidr,
+            ),
+        )
 
-        async def resolve_one(subdomain: str) -> Optional[str]:
-            async with semaphore:
-                info = await loop.run_in_executor(
-                    None, resolve.resolve_domain, subdomain
-                )
-                if info and info.get('ip') == wildcard_ip:
-                    return subdomain
-            return None
-
-        tasks = [resolve_one(s) for s in subdomains]
-        results = await asyncio.gather(*tasks)
-
-        to_remove = {r for r in results if r is not None}
-        if to_remove:
-            self.subdomains.difference_update(to_remove)
+        self.subdomains = kept
+        if removed:
             logger.warning(
-                f'泛解析过滤: 移除了 {len(to_remove)} 个泛解析子域名，'
+                f'泛解析过滤: 移除了 {len(removed)} 个泛解析子域名，'
                 f'剩余 {len(self.subdomains)} 个'
             )
         else:
             logger.debug('泛解析过滤: 无匹配子域名')
-        return len(to_remove)
+        return len(removed)
 
     async def run_async(self) -> List[str]:
         """
@@ -502,9 +499,9 @@ class Collect:
 
         # 先检测泛解析：若存在则限制 VirusTotal 等高频模块的拉取页数
         if self.wildcard_filter:
-            wildcard_ip = await self._detect_wildcard_ip()
-            if wildcard_ip:
-                self._wildcard_ip = wildcard_ip
+            wildcard_info = await self._detect_wildcard()
+            if wildcard_info:
+                self._wildcard_info = wildcard_info
                 for module in all_modules:
                     source = getattr(module, 'source', '')
                     if source == 'virustotal' and hasattr(module, 'max_pages'):
@@ -515,7 +512,7 @@ class Collect:
                         )
                         break
         else:
-            self._wildcard_ip = None
+            self._wildcard_info = None
 
         total = len(all_modules)
         logger.info(f'并发执行 {total} 个模块（并发数: {self.max_concurrent}）')
@@ -548,9 +545,9 @@ class Collect:
                 except Exception:
                     pass
 
-        # 泛解析过滤：移除解析到泛解析 IP 的子域名
-        if self._wildcard_ip and len(self.subdomains) >= 10:
-            await self._filter_wildcard_subdomains(self._wildcard_ip)
+        # 泛解析过滤：移除属于泛解析的子域名
+        if self._wildcard_info and len(self.subdomains) >= 10:
+            await self._filter_wildcard_subdomains(self._wildcard_info)
 
         self.end_time = time.time()
         self.elapse = round(self.end_time - self.start_time, 1)
