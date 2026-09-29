@@ -51,6 +51,8 @@ class Module(object):
         self.proxy = utils.get_random_proxy() if self.proxy_enable else None
         self.results_dir = self.config.get('results_dir', Path.cwd() / 'results')
         self.save_module_result = self.config.get('save_module_result', False)
+        # save_module_result 控制 JSON 落盘，save_db 控制 SQLite 落库，二者独立
+        self.save_db_enabled = self.config.get('save_db', False)
 
         self.subdomains = set()
         self.infos = dict()
@@ -438,12 +440,12 @@ class Module(object):
 
     def save_db(self, db_path: str = None):
         """
-        将模块结果保存到数据库（仅 save_module_result 开启时生效）
+        将模块结果保存到数据库（仅 config 开启 save_db 时生效）
 
         :param str db_path: 数据库文件路径
         :return bool: 是否执行了保存
         """
-        if not self.save_module_result:
+        if not self.save_db_enabled:
             return False
         logger.debug('正在保存结果到数据库')
         db = Database(db_path)

@@ -7,6 +7,7 @@ JustOne - 子域名收集工具
 一、基本收集
     python justone.py main example.com                    # 完整收集（搜索+证书+数据集+爆破+置换）
     python justone.py main example.com --no-brute        # 禁用爆破模块
+    python justone.py main example.com --save-db         # 模块结果写入 SQLite（供 enrich 命令使用）
     python justone.py main example.com --no-altdns       # 禁用子域置换模块
     python justone.py main example.com --no-search       # 禁用搜索引擎模块
     python justone.py main example.com --no-cert         # 禁用证书查询模块
@@ -202,6 +203,7 @@ def main(
     disable_cert: bool = typer.Option(False, "--no-cert", help="禁用证书查询模块"),
     disable_dataset: bool = typer.Option(False, "--no-dataset", help="禁用数据集模块"),
     altdns: bool = typer.Option(True, "--altdns/--no-altdns", help="启用子域置换模块"),
+    save_db: bool = typer.Option(False, "--save-db", help="将各模块结果写入 SQLite（供 enrich 命令使用）"),
     no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
     wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
@@ -233,6 +235,7 @@ def main(
         'enable_certificate': not disable_cert,
         'enable_dataset': not disable_dataset,
         'save_module_result': False,
+        'save_db': save_db,
         'proxy_enable': settings.proxy_enable,
         'LEAKIX_API': settings.leakix_api,
         'wildcard_filter': not no_wildcard,
@@ -315,6 +318,8 @@ def check(
     format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
     dns_concurrent: int = typer.Option(200, "--dns-concurrent", "-dc", help="DNS 解析并发数（默认 200）"),
     cdn_concurrent: int = typer.Option(100, "--cdn-concurrent", "-cc", help="CDN 识别并发数（默认 100）"),
+    http_concurrent: int = typer.Option(100, "--http-concurrent", "-hc", help="HTTP 检查并发数（默认 100）"),
+    save_db: bool = typer.Option(False, "--save-db", help="将模块发现结果写入 SQLite（供 enrich 命令使用）"),
     no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
     wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
 ):
@@ -361,13 +366,14 @@ def check(
         main_domain = domain_obj.registered()
         console.print(f"[bold cyan]检查子域名: {main_domain}[/bold cyan]")
 
+        discovery_config = {'save_db': save_db}
         discovery_modules = [
-            (CertInfo(main_domain), 'SSL证书'),
-            (Robots(main_domain), 'robots.txt'),
-            (Sitemap(main_domain), 'sitemap'),
-            (CrossDomain(main_domain), 'crossdomain.xml'),
-            (AXFR(main_domain), 'DNS域传送'),
-            (NSEC(main_domain), 'DNSSEC'),
+            (CertInfo(main_domain, discovery_config), 'SSL证书'),
+            (Robots(main_domain, discovery_config), 'robots.txt'),
+            (Sitemap(main_domain, discovery_config), 'sitemap'),
+            (CrossDomain(main_domain, discovery_config), 'crossdomain.xml'),
+            (AXFR(main_domain, discovery_config), 'DNS域传送'),
+            (NSEC(main_domain, discovery_config), 'DNSSEC'),
         ]
         console.print("[cyan]执行域名级检查发现子域名...[/cyan]")
         for mod, label in discovery_modules:
@@ -409,7 +415,7 @@ def check(
         checker = DNSCheck(main_domain or "unknown", concurrent=dns_concurrent)
         results = checker.run(subdomains, show_progress=True)
     else:
-        checker = AsyncHTTPCheck(main_domain or "unknown", concurrent=100)
+        checker = AsyncHTTPCheck(main_domain or "unknown", concurrent=http_concurrent)
         results = checker.run(subdomains, show_progress=True)
     console.print(f"发现 {len(results)} 个存活的子域名")
 

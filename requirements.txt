@@ -22,11 +22,5 @@ shodan>=1.30.0
 # LeakIX API（leakix 数据集模块需要）
 leakix>=1.1.0
 
-# BeautifulSoup（common/similarity.py 需要）
-beautifulsoup4>=4.12.0
-
-# SQLAlchemy（common/records.py 需要）
-SQLAlchemy>=2.0.0
-
 # idna（common/tldextract.py 需要）
 idna>=3.0
