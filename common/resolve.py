@@ -2,10 +2,10 @@
 DNS 解析模块
 """
 
-import json
 import random
 import socket as socket_module
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Optional, Callable
 from urllib.parse import urlparse
@@ -35,6 +35,7 @@ resolve_config = {
 _socks5_semaphore = threading.Semaphore(32)
 
 _socks5_fallback_warned = False
+_socks5_timeout_warned = False
 
 
 def _warn_socks5_fallback():
@@ -43,6 +44,16 @@ def _warn_socks5_fallback():
     if not _socks5_fallback_warned:
         _socks5_fallback_warned = True
         logger.warning('SOCKS5 DNS 代理不可用，已自动回退直连 DNS')
+
+
+def _warn_socks5_timeout_fallback():
+    """SOCKS5 DNS 查询超时回退直连时，仅警告一次（直连结果可能被污染）"""
+    global _socks5_timeout_warned
+    if not _socks5_timeout_warned:
+        _socks5_timeout_warned = True
+        logger.warning(
+            'SOCKS5 DNS 查询超时，已回退直连 DNS（直连结果可能受 DNS 污染影响）'
+        )
 
 
 def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
@@ -104,8 +115,9 @@ def _socks5_tcp(q, where, timeout=None, port=53, source=None, source_port=0,
             logger.debug(f'SOCKS5 DNS 代理异常 ({type(e).__name__}): {e}')
             _warn_socks5_fallback()
         except (socket_module.timeout, TimeoutError) as e:
-            # DNS 查询超时（非代理故障），静默回退直连 DNS
+            # DNS 查询超时（非代理故障），回退直连 DNS；结果可能受本地 DNS 污染影响
             logger.debug(f'SOCKS5 DNS 查询超时 ({type(e).__name__}): {e}')
+            _warn_socks5_timeout_fallback()
         except OSError as e:
             # 其他网络错误（连接重置等），静默回退直连 DNS
             logger.debug(f'SOCKS5 DNS 网络错误 ({type(e).__name__}): {e}')
@@ -176,6 +188,36 @@ def set_resolve_config(config: dict):
     resolve_config.update(config)
 
 
+# 每线程独立的 Resolver 缓存（按 nameserver 元组复用，避免每次查询重建 Resolver）
+_resolver_local = threading.local()
+
+
+def _get_resolver(nameservers: List[str] = None):
+    """
+    获取当前线程的 dns.resolver.Resolver（按 nameservers 缓存复用）
+
+    Resolver 构造需要加载系统配置并初始化 nameserver 列表，批量解析场景下
+    每次查询都新建的开销显著；按线程缓存同时规避了跨线程共享实例的问题。
+
+    :param list nameservers: DNS 服务器列表，None 使用全局配置
+    :return: dns.resolver.Resolver 实例
+    """
+    ns = tuple(nameservers) if nameservers else tuple(resolve_config.get('dns_nameservers'))
+    cache = getattr(_resolver_local, 'resolvers', None)
+    if cache is None:
+        cache = {}
+        _resolver_local.resolvers = cache
+
+    resolver = cache.get(ns)
+    if resolver is None:
+        resolver = dns.resolver.Resolver()
+        resolver.nameservers = list(ns)
+        resolver.timeout = 5
+        resolver.lifetime = 10
+        cache[ns] = resolver
+    return resolver
+
+
 def filter_subdomain(data):
     """
     过滤出没有 IP 的子域
@@ -229,12 +271,7 @@ def resolve_domain(subdomain: str, nameservers: List[str] = None) -> Optional[Di
     :return: 解析信息字典，解析失败返回 None
     """
     info = {'subdomain': subdomain, 'resolve': 0, 'alive': 0}
-    ns = nameservers or resolve_config.get('dns_nameservers')
-
-    resolver = dns.resolver.Resolver()
-    resolver.nameservers = ns
-    resolver.timeout = 5
-    resolver.lifetime = 10
+    resolver = _get_resolver(nameservers)
 
     try:
         # SOCKS5 必须使用 TCP 模式（UDP ASSOCIATE 在不同实现中不可靠）
@@ -271,25 +308,44 @@ def resolve_domain(subdomain: str, nameservers: List[str] = None) -> Optional[Di
 
 def resolve_batch(subdomains: List[str],
                   nameservers: List[str] = None,
-                  progress_callback: Callable = None) -> Dict[str, Dict]:
+                  progress_callback: Callable = None,
+                  concurrent: int = 50) -> Dict[str, Dict]:
     """
-    批量解析子域名
+    批量解析子域名（线程池并发）
 
     :param list subdomains: 要解析的子域名列表
     :param list nameservers: DNS 服务器列表
-    :param callable progress_callback: 进度回调函数
+    :param callable progress_callback: 进度回调函数 (已完成, 总数)
+    :param int concurrent: 并发线程数，1 时串行执行
     :return: 子域名 -> 解析信息 的字典
     """
     results = {}
-    total = len(subdomains)
+    items = list(subdomains)
+    total = len(items)
+    if not total:
+        return results
 
-    for i, subdomain in enumerate(subdomains):
-        if progress_callback:
-            progress_callback(i + 1, total)
+    workers = max(1, min(concurrent, total))
 
-        info = resolve_domain(subdomain, nameservers)
-        if info:
-            results[subdomain] = info
+    if workers > 1:
+        completed = 0
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_sub = {
+                executor.submit(resolve_domain, s, nameservers): s for s in items
+            }
+            for future in as_completed(future_to_sub):
+                subdomain = future_to_sub[future]
+                info = future.result()
+                if info:
+                    results[subdomain] = info
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed, total)
+    else:
+        for subdomain in items:
+            info = resolve_domain(subdomain, nameservers)
+            if info:
+                results[subdomain] = info
 
     return results
 
@@ -306,6 +362,7 @@ def run_resolve(domain: str, data: List[Dict], config: dict = None) -> List[Dict
     cfg = config or {}
     nameservers = cfg.get('nameservers', resolve_config.get('dns_nameservers'))
     progress_callback = cfg.get('progress_callback')
+    concurrent = cfg.get('concurrent', 50)
 
     logger.info(f'开始解析域名 {domain} 的子域名')
     subdomains = filter_subdomain(data)
@@ -315,7 +372,7 @@ def run_resolve(domain: str, data: List[Dict], config: dict = None) -> List[Dict
         return data
 
     logger.info(f'正在解析 {len(subdomains)} 个子域名')
-    infos = resolve_batch(subdomains, nameservers, progress_callback)
+    infos = resolve_batch(subdomains, nameservers, progress_callback, concurrent=concurrent)
 
     data = update_data(data, infos)
     logger.info(f'完成域名 {domain} 的子域名解析')

@@ -10,7 +10,9 @@ import socket
 import random
 import string
 import asyncio
-from urllib.parse import scheme_chars
+from functools import partial
+from typing import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ipaddress import IPv4Address, ip_address
 from pathlib import Path
 
@@ -22,7 +24,6 @@ from dns.resolver import Resolver
 from common.domain import Domain
 
 IP_RE = re.compile(r'^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$')
-SCHEME_RE = re.compile(r'^([' + scheme_chars + ']+:)?//')
 
 user_agents = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
@@ -231,6 +232,73 @@ def split_list(ls, size):
     return [ls[i:i + size] for i in range(0, len(ls), size)]
 
 
+def run_concurrent(items, worker, max_workers: int = 50, desc: str = None,
+                   bar_format: str = None,
+                   progress_callback: Callable = None) -> list:
+    """
+    使用线程池并发执行 worker，返回与输入顺序一致的结果列表
+
+    :param items: 可迭代的输入项
+    :param worker: 接收单个输入项的可调用对象
+    :param int max_workers: 最大并发线程数（1 时串行执行）
+    :param str desc: tqdm 进度条描述，None 则不显示进度条
+    :param str bar_format: tqdm 进度条格式
+    :param callable progress_callback: 进度回调 (已完成数量, 总数)
+    :return: list，顺序与输入一致
+    """
+    from tqdm import tqdm
+
+    item_list = list(items)
+    total = len(item_list)
+    if not total:
+        return []
+
+    workers = max(1, min(max_workers, total))
+    results = [None] * total
+
+    pbar = None
+    if desc:
+        pbar = tqdm(
+            total=total,
+            desc=desc,
+            ncols=60,
+            mininterval=0.5,
+            position=0,
+            bar_format=bar_format or '{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]',
+            leave=False,
+        )
+
+    done = 0
+
+    def _on_done():
+        nonlocal done
+        done += 1
+        if pbar is not None:
+            pbar.update(1)
+        if progress_callback:
+            progress_callback(done, total)
+
+    try:
+        if workers > 1:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(worker, item): index
+                    for index, item in enumerate(item_list)
+                }
+                for future in as_completed(futures):
+                    results[futures[future]] = future.result()
+                    _on_done()
+        else:
+            for index, item in enumerate(item_list):
+                results[index] = worker(item)
+                _on_done()
+    finally:
+        if pbar is not None:
+            pbar.close()
+
+    return results
+
+
 def match_main_domain(domain):
     """
     匹配主域名
@@ -373,24 +441,6 @@ def check_response(method, resp):
     return False
 
 
-def mark_subdomain(old_data, now_data):
-    mark_data = now_data.copy()
-    if not old_data:
-        for index, item in enumerate(mark_data):
-            item['new'] = 1
-            mark_data[index] = item
-        return mark_data
-    old_subdomains = {item.get('subdomain') for item in old_data}
-    for index, item in enumerate(mark_data):
-        subdomain = item.get('subdomain')
-        if subdomain in old_subdomains:
-            item['new'] = 0
-        else:
-            item['new'] = 1
-        mark_data[index] = item
-    return mark_data
-
-
 def remove_invalid_string(string):
     return re.sub(r'[\000-\010]|[\013-\014]|[\016-\037]', r'', string)
 
@@ -466,10 +516,6 @@ def get_request_count():
     return os.cpu_count() * 16
 
 
-def uniq_dict_list(dict_list):
-    return list(filter(lambda name: dict_list.count(name) == 1, dict_list))
-
-
 def delete_file(*paths):
     for path in paths:
         try:
@@ -481,22 +527,30 @@ def delete_file(*paths):
 async def check_net_async(timeout: int = None, verify: bool = None):
     urls = ['http://ip-api.com/json/']
     url = random.choice(urls)
-    header = {'User_Agent': 'curl'}
+    header = {'User-Agent': 'curl'}
     timeout = timeout or http_config['timeout']
     verify = verify if verify is not None else http_config['verify_ssl']
 
+    loop = asyncio.get_running_loop()
+    rsp = None
     for attempt in range(3):
         try:
             async with asyncio.timeout(timeout):
-                rsp = requests.get(url, headers=header, timeout=timeout, verify=verify)
+                # requests 是阻塞调用，放到线程池执行，避免卡住事件循环
+                rsp = await loop.run_in_executor(
+                    None,
+                    partial(requests.get, url, headers=header,
+                            timeout=timeout, verify=verify),
+                )
                 break
         except Exception:
+            rsp = None
             await asyncio.sleep(2)
             continue
     else:
         return False, None
 
-    country = rsp.json().get('country').lower()
+    country = (rsp.json().get('country') or '').lower()
     in_china = country in ['cn', 'china']
     return True, in_china
 
@@ -648,6 +702,7 @@ def looks_like_ip(maybe_ip):
             return True
     except socket.error:
         return False
+    return False
 
 
 def dns_resolver(nameservers: list = None, timeout: int = None):

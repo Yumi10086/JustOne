@@ -147,7 +147,7 @@ class Module(object):
         if ignore:
             level = 'DEBUG'
         try:
-            resp = self._do_get(session, url, params, **kwargs)
+            resp = self._do_request(session, 'GET', url, params=params, **kwargs)
         except Exception as e:
             if raise_error:
                 if isinstance(e, requests.exceptions.ConnectTimeout):
@@ -161,11 +161,18 @@ class Module(object):
             return resp
         return None
 
-    def _do_get(self, session, url, params, **kwargs):
+    def _do_request(self, session, method: str, url: str, params=None, data=None, **kwargs):
         """
-        执行 GET 请求，配置了代理则优先使用，失败回退直连
+        执行 HTTP 请求，配置了代理则优先使用，失败回退直连
 
         重试策略：代理(如果有) → 直连（最多 request_retries 次）
+
+        :param session: requests.Session 实例
+        :param str method: HTTP 方法（'GET'/'POST'）
+        :param str url: 请求 URL
+        :param params: 查询参数
+        :param data: 请求体
+        :return: 响应对象
         """
         last_error = None
 
@@ -173,27 +180,17 @@ class Module(object):
             proxies = self.proxy if attempt == 0 else None
 
             try:
-                return session.get(url, params=params, cookies=self.cookie,
-                                   headers=self.header, proxies=proxies,
-                                   timeout=self.timeout, verify=self.verify, **kwargs)
-            except (requests.exceptions.ProxyError,
-                    requests.exceptions.SSLError,
-                    requests.exceptions.ConnectionError) as e:
-                last_error = e
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
-                    else:
-                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
-                    continue
-                raise
+                return getattr(session, method.lower())(
+                    url, params=params, data=data, cookies=self.cookie,
+                    headers=self.header, proxies=proxies,
+                    timeout=self.timeout, verify=self.verify, **kwargs)
             except Exception as e:
                 last_error = e
                 if attempt == 0:
                     if self.proxy:
-                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
+                        logger.debug(f'代理失败，回退直连: {str(e)[:80]}')
                     else:
-                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
+                        logger.debug(f'直连失败，重试: {str(e)[:80]}')
                     continue
                 raise
 
@@ -211,7 +208,7 @@ class Module(object):
         """
         session = self._get_session()
         try:
-            resp = self._do_post(session, url, data, **kwargs)
+            resp = self._do_request(session, 'POST', url, data=data, **kwargs)
         except Exception as e:
             logger.error(e.args[0])
             return None
@@ -220,42 +217,6 @@ class Module(object):
         if utils.check_response('POST', resp):
             return resp
         return None
-
-    def _do_post(self, session, url, data, **kwargs):
-        """
-        执行 POST 请求，配置了代理则优先使用，失败回退直连
-        """
-        last_error = None
-
-        for attempt in range(self.request_retries):
-            proxies = self.proxy if attempt == 0 else None
-
-            try:
-                return session.post(url, data=data, cookies=self.cookie,
-                                    headers=self.header, proxies=proxies,
-                                    timeout=self.timeout, verify=self.verify, **kwargs)
-            except (requests.exceptions.ProxyError,
-                    requests.exceptions.SSLError,
-                    requests.exceptions.ConnectionError) as e:
-                last_error = e
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
-                    else:
-                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
-                    continue
-                raise
-            except Exception as e:
-                last_error = e
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(f'代理失败，回退直连: {str(e.args[0])[:80]}')
-                    else:
-                        logger.debug(f'直连失败，重试: {str(e.args[0])[:80]}')
-                    continue
-                raise
-
-        raise last_error
 
     def delete(self, url, check=True, **kwargs):
         """
@@ -430,12 +391,17 @@ class Module(object):
                 ip_times = info.get('ip_times')
                 cname_times = info.get('cname_times')
                 ttl = info.get('ttl')
+                # 各字段独立处理列表拼接，避免混合类型（cname 为列表而 ip 为字符串）时报错
                 if isinstance(cname, list):
-                    cname = ','.join(cname)
-                    ip = ','.join(ip)
-                    ip_times = ','.join([str(num) for num in ip_times])
-                    cname_times = ','.join([str(num) for num in cname_times])
-                    ttl = ','.join([str(num) for num in ttl])
+                    cname = ','.join(str(c) for c in cname)
+                if isinstance(ip, list):
+                    ip = ','.join(str(i) for i in ip)
+                if isinstance(ip_times, list):
+                    ip_times = ','.join(str(num) for num in ip_times)
+                if isinstance(cname_times, list):
+                    cname_times = ','.join(str(num) for num in cname_times)
+                if isinstance(ttl, list):
+                    ttl = ','.join(str(num) for num in ttl)
                 result = {'id': None,
                           'alive': info.get('alive'),
                           'request': info.get('request'),
@@ -472,12 +438,16 @@ class Module(object):
 
     def save_db(self, db_path: str = None):
         """
-        将模块结果保存到数据库
+        将模块结果保存到数据库（仅 save_module_result 开启时生效）
 
         :param str db_path: 数据库文件路径
+        :return bool: 是否执行了保存
         """
+        if not self.save_module_result:
+            return False
         logger.debug('正在保存结果到数据库')
         db = Database(db_path)
         db.create_table(self.domain)
         db.insert_many(self.domain, self.results, self.source)
         db.close()
+        return True

@@ -47,32 +47,21 @@ class AsyncHTTPCheck:
         self.infos = {}
 
     async def check_one(self, subdomain: str, session: aiohttp.ClientSession) -> Optional[Dict[str, Any]]:
-        """检查单个子域名"""
-        url = f'http://{subdomain}'
-        try:
-            async with session.head(url, allow_redirects=False) as resp:
-                if resp.status in ALIVE_CODES:
-                    return {
-                        'subdomain': subdomain,
-                        'url': url,
-                        'status': resp.status,
-                        'alive': True,
-                    }
-        except Exception as e:
-            logger.debug(f'HEAD 检查 {subdomain} 异常: {e}')
-            pass
-        try:
-            async with session.get(url, allow_redirects=False) as resp:
-                if resp.status in ALIVE_CODES:
-                    return {
-                        'subdomain': subdomain,
-                        'url': url,
-                        'status': resp.status,
-                        'alive': True,
-                    }
-        except Exception as e:
-            logger.debug(f'GET 检查 {subdomain} 异常: {e}')
-            pass
+        """检查单个子域名（http 失败时回退 https，避免漏检仅启用 443 的主机）"""
+        for scheme in ('http', 'https'):
+            url = f'{scheme}://{subdomain}'
+            for method in ('head', 'get'):
+                try:
+                    async with getattr(session, method)(url, allow_redirects=False) as resp:
+                        if resp.status in ALIVE_CODES:
+                            return {
+                                'subdomain': subdomain,
+                                'url': url,
+                                'status': resp.status,
+                                'alive': True,
+                            }
+                except Exception as e:
+                    logger.debug(f'{method.upper()} 检查 {url} 异常: {e}')
         return None
 
     async def run_async(self, subdomains: Set[str], show_progress: bool = True) -> list:

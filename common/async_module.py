@@ -46,15 +46,17 @@ class AsyncModuleMixin:
                     )
         return self._async_session
 
-        async def async_get(
-            self, url: str, params: dict = None, check: bool = True,
-            ignore: bool = False, **kwargs
-        ) -> Optional[str]:
-            """
-            异步 GET 请求，代理优先(若配置)，直连回退 + 指数退避
+    async def _async_request(
+        self, method: str, url: str, params: dict = None, data=None,
+        check: bool = True, ignore: bool = False, **kwargs
+    ) -> Optional[str]:
+        """
+        异步请求核心实现，代理优先(若配置)，直连回退 + 指数退避
 
+        :param str method: HTTP 方法（'GET'/'POST'）
         :param str url: 请求 URL
         :param dict params: 查询参数
+        :param data: 请求体
         :param bool check: 是否校验 HTTP 状态码
         :param bool ignore: 是否降级日志
         :param kwargs: 传递给 aiohttp 的额外参数
@@ -71,13 +73,13 @@ class AsyncModuleMixin:
             backoff = min(2 ** attempt, 30)
 
             try:
-                async with session.get(
-                    url, params=params, headers=headers,
+                async with getattr(session, method.lower())(
+                    url, params=params, data=data, headers=headers,
                     proxy=proxy, **kwargs
                 ) as resp:
                     if check and resp.status not in range(200, 300):
                         logger.debug(
-                            f'async_get {url[:80]} 返回状态码 {resp.status}，跳过'
+                            f'async_{method.lower()} {url[:80]} 返回状态码 {resp.status}，跳过'
                         )
                         return None
                     return await resp.text()
@@ -91,31 +93,43 @@ class AsyncModuleMixin:
                     aiohttp.ClientProxyConnectionError,
                     aiohttp.ServerTimeoutError,
                     asyncio.TimeoutError) as e:
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(
-                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
-                        )
-                        await asyncio.sleep(backoff + random.uniform(0, 1))
-                        continue
-                    logger.log(level, f'async_get 失败: {str(e)[:100]}')
-                    return None
-                logger.log(level, f'async_get 失败: {str(e)[:100]}')
+                if attempt == 0 and self.proxy:
+                    logger.debug(
+                        f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
+                    )
+                    await asyncio.sleep(backoff + random.uniform(0, 1))
+                    continue
+                logger.log(level, f'async_{method.lower()} 失败: {str(e)[:100]}')
                 return None
             except Exception as e:
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(
-                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
-                        )
-                        await asyncio.sleep(backoff + random.uniform(0, 1))
-                        continue
-                    logger.log(level, f'async_get 失败: {str(e)[:100]}')
-                    return None
-                logger.log(level, f'async_get 失败: {str(e)[:100]}')
+                if attempt == 0 and self.proxy:
+                    logger.debug(
+                        f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
+                    )
+                    await asyncio.sleep(backoff + random.uniform(0, 1))
+                    continue
+                logger.log(level, f'async_{method.lower()} 失败: {str(e)[:100]}')
                 return None
 
         return None
+
+    async def async_get(
+        self, url: str, params: dict = None, check: bool = True,
+        ignore: bool = False, **kwargs
+    ) -> Optional[str]:
+        """
+        异步 GET 请求，代理优先(若配置)，直连回退 + 指数退避
+
+        :param str url: 请求 URL
+        :param dict params: 查询参数
+        :param bool check: 是否校验 HTTP 状态码
+        :param bool ignore: 是否降级日志
+        :param kwargs: 传递给 aiohttp 的额外参数
+        :return: 响应文本，失败返回 None
+        """
+        return await self._async_request(
+            'GET', url, params=params, check=check, ignore=ignore, **kwargs
+        )
 
     async def async_post(
         self, url: str, data: dict = None, check: bool = True,
@@ -130,60 +144,9 @@ class AsyncModuleMixin:
         :param kwargs: 传递给 aiohttp 的额外参数
         :return: 响应文本，失败返回 None
         """
-        session = await self._get_async_session()
-        headers = self.header.copy() if self.header else {}
-        if 'headers' in kwargs:
-            headers.update(kwargs.pop('headers'))
-
-        for attempt in range(self.request_retries):
-            proxy = self.proxy if attempt == 0 else None
-            backoff = min(2 ** attempt, 30)
-
-            try:
-                async with session.post(
-                    url, data=data, headers=headers,
-                    proxy=proxy, **kwargs
-                ) as resp:
-                    if check and resp.status not in range(200, 300):
-                        logger.debug(
-                            f'async_post {url[:80]} 返回状态码 {resp.status}'
-                        )
-                        return None
-                    return await resp.text()
-            except aiohttp.ClientSSLError as e:
-                logger.error(f'SSL 错误: {str(e)[:100]}')
-                return None
-            except UnicodeDecodeError as e:
-                logger.error(f'编码错误: {str(e)[:100]}')
-                return None
-            except (aiohttp.ClientConnectorError,
-                    aiohttp.ServerTimeoutError,
-                    asyncio.TimeoutError) as e:
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(
-                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
-                        )
-                        await asyncio.sleep(backoff + random.uniform(0, 1))
-                        continue
-                    logger.error(f'async_post 失败: {str(e)[:100]}')
-                    return None
-                logger.error(f'async_post 失败: {str(e)[:100]}')
-                return None
-            except Exception as e:
-                if attempt == 0:
-                    if self.proxy:
-                        logger.debug(
-                            f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
-                        )
-                        await asyncio.sleep(backoff + random.uniform(0, 1))
-                        continue
-                    logger.error(f'async_post 失败: {str(e)[:100]}')
-                    return None
-                logger.error(f'async_post 失败: {str(e)[:100]}')
-                return None
-
-        return None
+        return await self._async_request(
+            'POST', url, data=data, check=check, **kwargs
+        )
 
     async def async_close(self):
         """关闭 aiohttp ClientSession（并发安全）"""

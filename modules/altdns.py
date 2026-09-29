@@ -7,12 +7,10 @@ import time
 import re
 from pathlib import Path
 from typing import Optional, Set, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from tqdm import tqdm
 
 from config.logging import logger
 from common import resolve
+from common import utils
 from common.wildcard import WildcardInfo, detect_wildcard
 
 
@@ -173,11 +171,6 @@ class Altdns:
         :param bool show_progress: 是否显示进度条
         :return: 有效子域名集合
         """
-        results: Set[str] = set()
-        total = len(candidates)
-        if total == 0:
-            return results
-
         def resolve_one(candidate: str) -> Optional[str]:
             try:
                 info = resolve.resolve_domain(candidate)
@@ -190,42 +183,13 @@ class Altdns:
                 logger.debug(f'DNS 解析异常 {candidate}: {e}')
             return None
 
-        candidates_list = list(candidates)
-
-        if show_progress:
-            pbar = tqdm(
-                total=total,
-                desc='置换验证',
-                ncols=60,
-                mininterval=0.5,
-                position=0,
-                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]',
-                leave=False,
-            )
-        else:
-            pbar = None
-
-        if self.concurrent > 1 and total > 1:
-            with ThreadPoolExecutor(max_workers=min(self.concurrent, total)) as executor:
-                futures = {executor.submit(resolve_one, c): c for c in candidates_list}
-                for i, future in enumerate(as_completed(futures)):
-                    result = future.result()
-                    if result:
-                        results.add(result)
-                    if show_progress:
-                        pbar.update(1)
-        else:
-            for candidate in candidates_list:
-                result = resolve_one(candidate)
-                if result:
-                    results.add(result)
-                if show_progress and pbar:
-                    pbar.update(1)
-
-        if show_progress and pbar:
-            pbar.close()
-
-        return results
+        results_list = utils.run_concurrent(
+            candidates,
+            resolve_one,
+            max_workers=self.concurrent,
+            desc='置换验证' if show_progress else None,
+        )
+        return {r for r in results_list if r}
 
     def run(self, show_progress: bool = True) -> Set[str]:
         """

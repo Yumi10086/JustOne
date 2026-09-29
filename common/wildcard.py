@@ -17,7 +17,6 @@
 
 import ipaddress
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
@@ -25,6 +24,7 @@ import dns.resolver
 
 from config.logging import logger
 from common import resolve
+from common import utils
 
 DEFAULT_PROBES = 3
 _LABEL_PREFIX = '_wc'
@@ -224,9 +224,10 @@ def detect_wildcard(domain: str, probes: int = DEFAULT_PROBES,
     """
     info = WildcardInfo(domain=domain)
     probe_count = max(1, int(probes))
-    for _ in range(probe_count):
-        label = f'{_LABEL_PREFIX}{uuid.uuid4().hex[:10]}.{domain}'
-        ipv4, ipv6, cnames = _resolve_record(label, nameservers)
+    labels = [f'{_LABEL_PREFIX}{uuid.uuid4().hex[:10]}.{domain}' for _ in range(probe_count)]
+    # 多个探测标签并发查询，缩短泛解析检测耗时
+    records = utils.run_concurrent(labels, lambda label: _resolve_record(label, nameservers))
+    for (ipv4, ipv6, cnames), label in zip(records, labels):
         if ipv4 or ipv6 or cnames:
             info.detected = True
             info.probes.append(label)
@@ -325,18 +326,15 @@ def filter_subdomains(subdomains, info: WildcardInfo,
         ipv4, ipv6, cnames = _resolve_record(subdomain, nameservers)
         return subdomain, info.matches(ipv4, ipv6, cnames, include_cidr)
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(worker, s): s for s in candidates}
-        done = 0
-        for future in as_completed(futures):
-            subdomain, wild = future.result()
-            if wild:
-                removed.add(subdomain)
-            else:
-                kept.add(subdomain)
-            done += 1
-            if progress_callback:
-                progress_callback(done, total)
+    pairs = utils.run_concurrent(
+        candidates, worker, max_workers=workers,
+        progress_callback=progress_callback,
+    )
+    for subdomain, wild in pairs:
+        if wild:
+            removed.add(subdomain)
+        else:
+            kept.add(subdomain)
 
     logger.info(f'泛解析过滤: 检查 {total} 个，移除 {len(removed)} 个，保留 {len(kept)} 个')
     return kept, removed

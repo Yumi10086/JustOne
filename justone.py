@@ -64,7 +64,7 @@ import asyncio
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 import typer
 from rich.console import Console
@@ -134,6 +134,44 @@ def get_default_output(domain: str, prefix: str = '', format: str = 'csv') -> Pa
     prefix = f"{prefix}_" if prefix else ""
     filename = f"{prefix}{domain}.{format}"
     return results_dir / filename
+
+
+def load_subdomain_file(path: Path) -> Set[str]:
+    """
+    从 TXT/CSV 文件加载子域名集合（自动识别格式）
+
+    CSV 需含表头，优先取 subdomain/domain/url/host 列，未命中则取第一列；
+    TXT 每行一个子域名，空行与 # 开头的注释行会被忽略。
+
+    :param Path path: 输入文件路径
+    :return: 子域名集合
+    """
+    import csv as csv_module
+
+    subdomains: Set[str] = set()
+    with open(path, 'r', encoding='utf-8') as f:
+        first_line = f.readline().strip()
+        f.seek(0)
+
+        # 含逗号视为 CSV（多列），否则按纯文本处理（每行一个子域名）
+        if ',' in first_line:
+            reader = csv_module.DictReader(f)
+            for row in reader:
+                sub = (row.get('subdomain') or row.get('domain')
+                       or row.get('url') or row.get('host'))
+                if not sub:
+                    # 未命中常见列名时回退到第一列
+                    sub = next(iter(row.values()), None)
+                if sub:
+                    sub = str(sub).strip()
+                    if sub and not sub.startswith('#'):
+                        subdomains.add(sub)
+        else:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    subdomains.add(line)
+    return subdomains
 
 
 def version_callback(value: bool):
@@ -211,8 +249,6 @@ def main(
 
     subdomains = set()
     total_elapse = 0
-
-    import sys
 
     def show_progress(description: str, start_time: float):
         """单行进度显示"""
@@ -310,27 +346,7 @@ def check(
         if not input_file.exists():
             console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
             raise typer.Exit(1)
-
-        import csv as csv_module
-        with open(input_file, 'r', encoding='utf-8') as f:
-            first_line = f.readline().strip()
-            f.seek(0)
-
-            # 检测文件格式：CSV（含逗号）或纯文本（每行一个子域名）
-            if ',' in first_line:
-                reader = csv_module.DictReader(f)
-                for row in reader:
-                    # 尝试 subdomain / domain / url / host 等常见列名
-                    sub = row.get('subdomain') or row.get('domain') or row.get('url') or row.get('host')
-                    if sub:
-                        sub = sub.strip()
-                        if sub and not sub.startswith('#'):
-                            subdomains.add(sub)
-            else:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        subdomains.add(line)
+        subdomains = load_subdomain_file(input_file)
 
         main_domain = None
         # -i 模式：从第一个子域名提取注册域名，供 DNSSEC/CDN 检测使用
@@ -638,32 +654,7 @@ def takeover(
         if not input_file.exists():
             console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
             raise typer.Exit(1)
-        import csv as _csv
-        with open(input_file, 'r', encoding='utf-8') as f:
-            # 先探一行判断是否为 CSV 多列格式
-            first_line = f.readline()
-            f.seek(0)
-            has_commas = ',' in (first_line or '')
-            if has_commas:
-                reader = _csv.reader(f)
-                header_skipped = False
-                for row in reader:
-                    if not row or not row[0].strip():
-                        continue
-                    # 跳过表头行（heuristic：第一列看起来像表头关键词）
-                    if not header_skipped and row[0].strip().lower() in (
-                        'subdomain', 'domain', 'host', 'hostname', 'url',
-                    ):
-                        header_skipped = True
-                        continue
-                    header_skipped = True
-                    subdomains.add(row[0].strip())
-            else:
-                # 纯文本：每行一个子域名
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        subdomains.add(line)
+        subdomains = load_subdomain_file(input_file)
         console.print(f"[bold cyan]从文件加载 {len(subdomains)} 个子域名[/bold cyan]")
     elif target:
         domain_obj = Domain(target)
