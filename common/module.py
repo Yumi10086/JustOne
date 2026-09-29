@@ -191,6 +191,8 @@ class Module(object):
                 if attempt == 0:
                     if self.proxy:
                         logger.debug(f'代理失败，回退直连: {str(e)[:80]}')
+                        # 轮换代理：为后续请求换一个新代理，避免坏代理伴随模块整个生命周期
+                        self.proxy = utils.get_random_proxy()
                     else:
                         logger.debug(f'直连失败，重试: {str(e)[:80]}')
                     continue

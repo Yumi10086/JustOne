@@ -16,6 +16,9 @@ import tempfile
 import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+
+import requests
+
 from common.module import Module, http_config, set_http_config
 
 
@@ -363,6 +366,23 @@ class TestModuleHTTPMethods(unittest.TestCase):
 
             result = m.get('http://example.com', check=False)
             self.assertEqual(result, mock_response)
+
+    def test_proxy_rotation_on_failure(self):
+        """Test proxy is rotated to a new one after proxy failure"""
+        m = Module('example.com')
+        m.proxy = {'http': 'http://old:8080', 'https': 'http://old:8080'}
+        new_proxy = {'http': 'http://new:8080', 'https': 'http://new:8080'}
+
+        with patch('common.module.utils.get_random_proxy', return_value=new_proxy):
+            with patch('requests.Session') as mock_session_class:
+                mock_session = MagicMock()
+                mock_session.get.side_effect = requests.exceptions.ProxyError('proxy dead')
+                mock_session_class.return_value = mock_session
+
+                result = m.get('http://example.com', check=False)
+
+        self.assertIsNone(result)
+        self.assertEqual(m.proxy, new_proxy)
 
 
 if __name__ == '__main__':

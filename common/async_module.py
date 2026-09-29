@@ -11,6 +11,7 @@ from typing import Optional
 
 import aiohttp
 
+from common import utils
 from config.logging import logger
 
 
@@ -97,6 +98,8 @@ class AsyncModuleMixin:
                     logger.debug(
                         f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
                     )
+                    # 轮换代理：为后续请求换一个新代理
+                    self.proxy = utils.get_random_proxy()
                     await asyncio.sleep(backoff + random.uniform(0, 1))
                     continue
                 logger.log(level, f'async_{method.lower()} 失败: {str(e)[:100]}')
@@ -106,6 +109,8 @@ class AsyncModuleMixin:
                     logger.debug(
                         f'代理失败，{backoff}s 后回退直连: {str(e)[:80]}'
                     )
+                    # 轮换代理：为后续请求换一个新代理
+                    self.proxy = utils.get_random_proxy()
                     await asyncio.sleep(backoff + random.uniform(0, 1))
                     continue
                 logger.log(level, f'async_{method.lower()} 失败: {str(e)[:100]}')
