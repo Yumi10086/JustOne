@@ -164,12 +164,15 @@ docker-compose.override.yml
 # ==========================
 # 自定义
 # ==========================
-*.md
-DevLog/
-tests/
-.skills/
+# 工具本地状态，不入库
 .omo
-tests/
-docs/
-!requirements.txt
 *.zip
+# requirements.txt / data/ 词表不受上方 *.txt、*.json 扫描结果规则影响
+!requirements.txt
+!data/**/*.txt
+!data/**/*.json
+# 根目录个人笔记保持不入库（沿用原 *.md 行为）；
+# 已入库的 README/AGENTS/DevLog/docs 不受此规则影响
+/*.md
+# 测试、文档、开发日志、技能配置均已纳入版本控制（2026-09-29 起）
+# 注意：config/.env、results/、*.db 等敏感/产物路径仍由上方规则保持忽略
