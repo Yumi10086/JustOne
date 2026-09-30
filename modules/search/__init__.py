@@ -14,6 +14,7 @@ from .yahoo import Yahoo, run as yahoo_run
 from .yandex import Yandex, run as yandex_run
 from .so import SoSearch, run as so_run
 from .sogou import SogouSearch, run as sogou_run
+from .gitee import Gitee, run as gitee_run
 
 __all__ = [
     'BaiduSearch', 'baidu_run',
@@ -28,4 +29,5 @@ __all__ = [
     'Yandex', 'yandex_run',
     'SoSearch', 'so_run',
     'SogouSearch', 'sogou_run',
+    'Gitee', 'gitee_run',
 ]

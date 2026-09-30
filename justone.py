@@ -304,7 +304,7 @@ def main(
             export_results(results, output, format)
         console.print(f"[green]结果已保存到: {output}[/green]")
     else:
-        console.print(f"\n[yellow]未发现子域名[/yellow]")
+        console.print("\n[yellow]未发现子域名[/yellow]")
 
 
 @app.command()
@@ -336,12 +336,12 @@ def check(
         python justone.py check -i subdomains.txt -o results   # 从文件批量检查
         python justone.py check example.com --no-wildcard      # 关闭泛解析排除
     """
-    from modules.check import DNSCheck, HTTPCheck
+    from modules.check import DNSCheck
     from modules.check.http import AsyncHTTPCheck
     from modules.check import CertInfo, Robots, Sitemap, CrossDomain, AXFR, NSEC
     from modules.check.cdn import CDNCheck
     from modules.check import DNSSecurityCheck
-    from modules.export import export_results, export_subdomains
+    from modules.export import export_results
 
     init_logging()
 
@@ -575,7 +575,7 @@ def altdns(
     if not input_file:
         console.print(f"[bold cyan]注册域名: {main_domain}[/bold cyan]")
 
-        console.print(f"[cyan]执行信息收集...[/cyan]")
+        console.print("[cyan]执行信息收集...[/cyan]")
         collect = Collect(main_domain, {
             'enable_search': True,
             'enable_certificate': True,
@@ -587,7 +587,7 @@ def altdns(
         subdomains = set(collect.run())
         console.print(f"[dim]收集到 {len(subdomains)} 个子域名[/dim]")
 
-        console.print(f"[cyan]执行爆破...[/cyan]")
+        console.print("[cyan]执行爆破...[/cyan]")
         brute_module = Brute(main_domain, wildcard_config)
         brute_subdomains = brute_module.run()
         subdomains.update(brute_subdomains)
@@ -712,7 +712,7 @@ def takeover(
     dead = [r for r in results if r.get('detail', {}).get('pre_check') == 'dead']
     safe = len(results) - len(vulnerable) - len(likely) - len(errors) - len(dead)
 
-    console.print(f"\n[bold]检测完成:[/bold]")
+    console.print("\n[bold]检测完成:[/bold]")
     if dead:
         console.print(f"  [dim]存活预检: {len(subdomains)} → {len(subdomains) - len(dead)} 存活, {len(dead)} 已死（跳过接管检测）[/dim]")
     console.print(f"  [bold red]可接管: {len(vulnerable)}[/bold red]")
@@ -721,12 +721,12 @@ def takeover(
     console.print(f"  [dim]错误: {len(errors)}[/dim]")
 
     if vulnerable:
-        console.print(f"\n[bold red]!!! 可接管域名 !!![/bold red]")
+        console.print("\n[bold red]!!! 可接管域名 !!![/bold red]")
         for r in vulnerable:
             console.print(f"  [red]{r['subdomain']}[/red] → {r['cname']} ({r['service']})")
 
     if likely:
-        console.print(f"\n[bold yellow]可疑域名:[/bold yellow]")
+        console.print("\n[bold yellow]可疑域名:[/bold yellow]")
         for r in likely:
             console.print(f"  [yellow]{r['subdomain']}[/yellow] → {r['cname']} ({r['service']})")
 

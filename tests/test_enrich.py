@@ -34,6 +34,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+import pytest
+
+# 真实 DNS/HTTP 探测（Database/日志已 mock，但探测等真实网络超时）：CI 默认跳过
+pytestmark = pytest.mark.network
 class TestEnrich(unittest.TestCase):
     """Enrich 类的单元测试"""
 

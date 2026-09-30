@@ -4,7 +4,6 @@
 """
 
 import time
-import re
 from pathlib import Path
 from typing import Optional, Set, List
 

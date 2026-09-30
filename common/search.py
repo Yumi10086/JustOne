@@ -9,7 +9,6 @@ import random
 from typing import Set, List
 
 from common.module import Module
-from config.settings import settings
 
 
 class Search(Module):

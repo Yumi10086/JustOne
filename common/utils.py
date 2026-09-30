@@ -11,7 +11,7 @@ import random
 import string
 import asyncio
 from functools import partial
-from typing import Callable
+from typing import Callable, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ipaddress import IPv4Address, ip_address
 from pathlib import Path

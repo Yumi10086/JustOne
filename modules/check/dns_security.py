@@ -4,14 +4,13 @@ DNS 安全检测模块
 """
 
 from typing import Optional, Dict, List, Any, Set
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass
 
 import dns.resolver
 import dns.rdatatype
 import dns.exception
 
 from common.module import Module
-from config.logging import logger
 
 DOMESTIC_NS = ['223.5.5.5', '114.114.114.114']
 INTERNATIONAL_NS = ['8.8.8.8', '1.1.1.1']

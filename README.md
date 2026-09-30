@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **多源收集** — 12 个搜索引擎 + 3 个证书透明度日志 + 15 个开放数据集 + 5 个威胁情报
+- **多源收集** — 13 个搜索引擎 + 3 个证书透明度日志 + 15 个开放数据集 + 5 个威胁情报
 - **信息丰富** — 对已有结果补全 DNS 解析、HTTP 探测、CDN 识别、IP 地理/ASN 信息
 - **DNS 爆破** — 高并发词表爆破，递归深度扩展
 - **子域置换** — 基于已有子域名生成变异候选（前缀/后缀/数字/连字符插入）
@@ -36,7 +36,9 @@ venv\Scripts\activate
 # Linux/Mac
 source venv/bin/activate
 
-pip install typer rich requests dnspython loguru aiohttp pydantic tqdm
+pip install -r requirements.txt
+# 或可编辑安装（含 dev 测试工具）：
+pip install -e ".[dev]"
 ```
 
 ### 配置
@@ -207,7 +209,7 @@ common/
     altdns.py         ← 子域置换
     enrich.py         ← 子域信息丰富（DNS/HTTP/IP 补全）
     export.py         ← CSV/JSON/TXT 导出
-  search/           ← 12 个搜索引擎
+  search/           ← 13 个搜索引擎
   certificates/     ← crt.sh / CertSpotter / Censys
   datasets/         ← 15 个开放数据集
   dnsquery/         ← MX / NS / SOA / SPF / TXT 查询
@@ -252,7 +254,7 @@ pytest -k "test_dnssec"         # 按关键字过滤
 
 | 类别 | 模块 |
 |------|------|
-| 搜索引擎 | Baidu, Bing, Google, Yahoo, Yandex, So, Sogou, Fofa, Hunter, Shodan, ZoomEye, GitHub |
+| 搜索引擎 | Baidu, Bing, Google, Yahoo, Yandex, So, Sogou, Fofa, Hunter, Shodan, ZoomEye, GitHub, Gitee |
 | 证书 | crt.sh, CertSpotter, Censys |
 | 数据集 | Anubis, Chinaz, Circl, Cloudflare, DNSDumpster, FullHunt, HackerTarget, IP138, LeakIX, NetCraft, PassiveDNS, RapidDNS, Robtex, SecurityTrails |
 | 威胁情报 | AlienVault OTX, URLScan.io, ThreatBook, VirusTotal, ThreatMiner |

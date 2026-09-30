@@ -56,7 +56,7 @@ class NetCraft(Module):
         try:
             # Step 1: 首次访问获取 challenge cookie（用 session 直连，不走 get() 的代理重试）
             self.header = self.get_header()
-            resp = session.get(
+            session.get(
                 self.base_url,
                 headers=self.header,
                 timeout=self.timeout,

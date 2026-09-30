@@ -49,7 +49,6 @@ class Censys(Module):
         :return: 响应对象，失败返回 None
         """
         session = self._get_session()
-        last_error = None
         for attempt in range(self.request_retries):
             proxies = self.proxy if attempt == 1 else None
             try:
@@ -61,7 +60,6 @@ class Censys(Module):
             except (requests.exceptions.ProxyError,
                     requests.exceptions.SSLError,
                     requests.exceptions.ConnectionError) as e:
-                last_error = e
                 if attempt == 0 and self.proxy:
                     logger = utils.get_logger()
                     logger.debug(f'{self.source} 直连失败，尝试代理: {str(e.args[0])[:80]}')
@@ -70,7 +68,6 @@ class Censys(Module):
                 logger.error(f'{self.source} 请求异常: {type(e).__name__}: {str(e.args[0])[:100]}')
                 return None
             except Exception as e:
-                last_error = e
                 if attempt == 0 and self.proxy:
                     logger = utils.get_logger()
                     logger.debug(f'{self.source} 直连失败，尝试代理: {str(e.args[0])[:80]}')

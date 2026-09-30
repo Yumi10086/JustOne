@@ -11,6 +11,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from modules.collect import Collect, collect_config, set_collect_config
 
 
+import pytest
+
+# 真实网络依赖（搜索引擎/证书日志/DNS 流量/CLI 端到端）：CI 默认跳过，
+# 本地用 pytest -m network 单独运行，或 pytest 全量运行
+pytestmark = pytest.mark.network
 class TestCollectConfig(unittest.TestCase):
     """测试收集调度器配置函数"""
 

@@ -13,7 +13,6 @@ logging.getLogger('aiohttp').setLevel(logging.CRITICAL)
 logging.getLogger('asyncio').setLevel(logging.CRITICAL)
 
 from common.module import Module
-from common import utils
 from config.logging import logger
 
 

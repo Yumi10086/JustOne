@@ -45,7 +45,7 @@ class FoFa(Search):
                 429: '请求频率过高，触发限流',
                 500: '服务器内部错误',
             }
-            msg = code_msg.get(resp.status_code, f'未知错误')
+            msg = code_msg.get(resp.status_code, '未知错误')
             logger.error(f'{self.source} {msg} (状态码: {resp.status_code})')
             return True
         try:

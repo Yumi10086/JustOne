@@ -12,6 +12,11 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
+import pytest
+
+# 真实网络依赖（搜索引擎/证书日志/DNS 流量/CLI 端到端）：CI 默认跳过，
+# 本地用 pytest -m network 单独运行，或 pytest 全量运行
+pytestmark = pytest.mark.network
 class TestJustOneCLI(unittest.TestCase):
     """测试 justone.py CLI 入口"""
 

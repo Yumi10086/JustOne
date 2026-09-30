@@ -3,8 +3,6 @@
 """
 
 import time
-import asyncio
-import sys
 from pathlib import Path
 from typing import Optional, Set, List
 
@@ -237,7 +235,7 @@ class Brute:
             return set()
 
         if self.check_wildcard():
-            logger.info(f'检测到泛解析，将跳过相同 IP 的结果')
+            logger.info('检测到泛解析，将跳过相同 IP 的结果')
 
         if self.recursive:
             logger.warning(

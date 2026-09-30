@@ -5,7 +5,7 @@
 import csv
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from config.logging import logger
 

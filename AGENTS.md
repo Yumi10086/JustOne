@@ -8,9 +8,13 @@
 # Windows venv
 venv\Scripts\activate
 
-# No requirements.txt — install as needed in the venv.
-# Core deps: typer, rich, requests, dnspython, loguru, pydantic-settings, aiohttp
+# Install
+pip install -r requirements.txt        # runtime deps
+pip install -e ".[dev]"                # or editable install incl. pytest/ruff
+# Optional engine clients (shodan, leakix) are in requirements.txt / pyproject extras.
 ```
+
+Project metadata, pytest and ruff config live in `pyproject.toml`.
 
 ## Running
 
@@ -27,14 +31,16 @@ python justone.py brute example.com               # brute-force only
 ## Testing
 
 ```bash
-pytest                          # 463 passed, 7 skipped (expected; API-key modules skip)
+pytest                          # full suite incl. network tests (slow, hits real APIs)
+pytest -m "not network" -q      # unit layer only — fast, no network, what CI runs
+pytest -m network -q            # network layer only
 pytest tests/test_search_baidu.py              # single module test
 pytest -k "test_collect"                        # filter by keyword
 ```
 
 Tests use `config/.env` for real API keys. Modules missing keys are skipped via `have_api()` guard — **7 skips is normal**.
 
-Tests use **unittest** (not pytest-native). `pytest` works as a unittest runner but there is no pytest config. The `tests/` directory is gitignored — tests live only in the working tree.
+Tests use **unittest** (not pytest-native). `pytest` works as a unittest runner; config in `pyproject.toml`. Network-dependent files (search baidu/bing, crtsh, socks5 traffic, justone e2e, collect) carry `pytestmark = pytest.mark.network`. GitHub Actions runs the unit layer only (`.github/workflows/tests.yml`).
 
 ## ⚠️ Encoding
 
@@ -63,7 +69,7 @@ common/
   database.py       ← SQLite persistence
 modules/
   collect.py        ← Collect scheduler. Async (asyncio) scheduling with Semaphore concurrency + per-module timeout.
-  search/           ← 12 search engines (baidu, bing, google, yahoo, fofa, hunter, shodan, zoomeye, so, sogou, yandex, gitee)
+  search/           ← 13 search engines (baidu, bing, google, yahoo, fofa, hunter, shodan, zoomeye, so, sogou, yandex, gitee, github)
   certificates/     ← crtsh, certspotter, censys
   datasets/         ← 17 modules (anubis, chinaz, circl, cloudflare, dnsdb, dnsdumpster, fullhunt, hackertarget, ip138, leakix, netcraft, passivedns, rapiddns, robtex, securitytrails, sitedossier)
   check/            ← http, dns, cdn, axfr, cert, csp, nsec, robots, sitemap, crossdomain

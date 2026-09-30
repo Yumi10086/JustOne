@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 from common.module import Module
 from common import resolve
-from common import utils
 from config.logging import logger
 
 

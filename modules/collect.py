@@ -110,7 +110,7 @@ class Collect:
         ('search', 'enable_search', 'modules.search',
          ('BaiduSearch', 'BingSearch', 'FoFa', 'Hunter', 'ShodanAPI',
           'ZoomEyeAPI', 'GithubAPI', 'Google', 'Yahoo', 'Yandex',
-          'SoSearch', 'SogouSearch')),
+          'SoSearch', 'SogouSearch', 'Gitee')),
         ('certificate', 'enable_certificate', 'modules.certificates',
          ('Crtsh', 'CertSpotter', 'Censys')),
         ('dataset', 'enable_dataset', 'modules.datasets',

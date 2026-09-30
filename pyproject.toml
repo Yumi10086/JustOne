@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "justone"
+version = "1.0.0"
+description = "JustOne - 子域名收集工具"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "requests>=2.31.0",
+    "dnspython>=2.6.0",
+    "loguru>=0.7.0",
+    "aiohttp>=3.9.0",
+    "tqdm>=4.66.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "pysocks>=1.7.1",
+    "playwright>=1.40.0",
+]
+
+[project.optional-dependencies]
+# 可选搜索引擎/数据集客户端（缺 API key 时模块自动跳过）
+engines = [
+    "shodan>=1.30.0",
+    "leakix>=1.1.0",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.setuptools]
+py-modules = ["justone"]
+
+[tool.setuptools.packages.find]
+include = ["common*", "modules*", "config*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "network: 依赖真实网络（搜索引擎抓取/证书日志/DNS 流量/CLI 端到端）。单元层用 pytest -m 'not network'，全量直接 pytest",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+extend-exclude = ["tests/diag_*", "tests/manual_*", "tests/trace_*", "tests/socks5_*"]
+
+[tool.ruff.lint]
+# 仅启用语法错误与 pyflakes（未定义名/未用导入），不引入风格强制
+select = ["E9", "F"]

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Optional, Set, Dict, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import dns.resolver
 
 from common.module import Module
 from common import utils
