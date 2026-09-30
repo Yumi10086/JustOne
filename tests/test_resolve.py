@@ -228,5 +228,40 @@ class TestRunResolve(unittest.TestCase):
         self.assertEqual(result[0]['ip'], '1.1.1.1')
 
 
+class TestNsPool(unittest.TestCase):
+    def test_pool_contains_builtin_and_files(self):
+        """NS 池应包含内置默认，且已并入 data/ 目录的 nameservers 文件"""
+        pool = resolve_config['dns_pool']
+        self.assertIn('223.5.5.5', pool)
+        # data/nameservers.txt + nameservers_cn.txt 共 35 条，去重后应大于内置 5 条
+        self.assertGreater(len(pool), 5)
+
+    def test_pool_no_duplicates(self):
+        """NS 池应去重"""
+        pool = resolve_config['dns_pool']
+        self.assertEqual(len(pool), len(set(pool)))
+
+    def test_get_resolver_uses_pool_subset(self):
+        """未指定 nameservers 时应使用池内随机子集（每线程最多 8 个）"""
+        import threading
+        from common import resolve as resolve_module
+        resolve_module._resolver_local = threading.local()
+
+        resolver = resolve_module._get_resolver()
+        used = list(resolver.nameservers)
+        self.assertTrue(1 <= len(used) <= 8)
+        for ns in used:
+            self.assertIn(ns, resolve_config['dns_pool'])
+
+    def test_get_resolver_explicit_nameservers(self):
+        """显式指定 nameservers 时应原样使用"""
+        import threading
+        from common import resolve as resolve_module
+        resolve_module._resolver_local = threading.local()
+
+        resolver = resolve_module._get_resolver(['10.0.0.1', '10.0.0.2'])
+        self.assertEqual(list(resolver.nameservers), ['10.0.0.1', '10.0.0.2'])
+
+
 if __name__ == '__main__':
     unittest.main()

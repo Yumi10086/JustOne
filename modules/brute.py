@@ -27,6 +27,8 @@ brute_config = {
     'wildcard_deal': True,
     'wildcard_probes': 3,
     'wildcard_cidr': False,
+    # 使用目标域名的权威 NS 解析候选（更快；NS 查询失败时自动回退公共 NS 池）
+    'authoritative_ns': False,
 }
 
 
@@ -64,6 +66,10 @@ class Brute:
         self.wildcard_deal = self.config.get('wildcard_deal', brute_config.get('wildcard_deal', True))
         self.wildcard_probes = self.config.get('wildcard_probes', brute_config.get('wildcard_probes', 3))
         self.wildcard_cidr = self.config.get('wildcard_cidr', brute_config.get('wildcard_cidr', False))
+        self.authoritative_ns = self.config.get(
+            'authoritative_ns', brute_config.get('authoritative_ns', False))
+        # 权威 NS 的 IP 列表；None 表示使用公共 NS 池
+        self._nameservers: Optional[List[str]] = None
 
         domain_obj = Domain(domain)
         self.registered_domain = domain_obj.registered()
@@ -128,6 +134,27 @@ class Brute:
         except Exception as e:
             logger.debug(f'泛解析检测异常: {e}')
         return False
+
+    def find_authoritative_ns(self) -> Optional[List[str]]:
+        """
+        查询目标域名的权威 NS 并解析为 IP
+
+        :return: 权威 NS 的 IP 列表，查询失败返回 None
+        """
+        try:
+            answers = utils.dns_query(self.registered_domain, 'NS')
+            if not answers:
+                return None
+            ns_hosts = [str(rdata.target).rstrip('.') for rdata in answers][:4]
+            ips: List[str] = []
+            for host in ns_hosts:
+                a_records = utils.dns_query(host, 'A')
+                if a_records:
+                    ips.extend(str(rdata) for rdata in a_records)
+            return list(dict.fromkeys(ips)) or None
+        except Exception as e:
+            logger.debug(f'查询权威 NS 失败: {e}')
+            return None
 
     def _merge_nested_wildcard(self, base: str) -> Optional[WildcardInfo]:
         """
@@ -202,7 +229,7 @@ class Brute:
         """
         def resolve_one(candidate: str) -> Optional[str]:
             try:
-                info = resolve.resolve_domain(candidate)
+                info = resolve.resolve_domain(candidate, self._nameservers)
                 if info and info.get('ip'):
                     if (self.wildcard_deal and self._wildcard_info
                             and self._wildcard_info.matches_record(info, include_cidr=self.wildcard_cidr)):
@@ -236,6 +263,15 @@ class Brute:
 
         if self.check_wildcard():
             logger.info('检测到泛解析，将跳过相同 IP 的结果')
+
+        # 权威 NS 解析（--auth-ns）：查询失败自动回退公共 NS 池
+        if self.authoritative_ns:
+            auth_ips = self.find_authoritative_ns()
+            if auth_ips:
+                self._nameservers = auth_ips
+                logger.info(f'使用权威 NS 解析: {auth_ips}')
+            else:
+                logger.warning('未获取到权威 NS，回退公共 NS 池')
 
         if self.recursive:
             logger.warning(
@@ -330,6 +366,8 @@ class Brute:
                     )
                     # 共享候选预算，限制整个递归树的查询总量
                     sub_brute._budget = self._budget
+                    # 继承权威 NS
+                    sub_brute._nameservers = self._nameservers
                     # 继承父级泛解析结果，并检测嵌套泛解析（如 *.dev.example.com）
                     merged_info = self._wildcard_info
                     if self.wildcard_check:

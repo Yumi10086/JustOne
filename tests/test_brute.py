@@ -252,7 +252,7 @@ class TestBrute(unittest.TestCase):
             domain=self.domain, detected=True, ips={'1.2.3.4'}
         )
 
-        def side_effect(domain):
+        def side_effect(domain, nameservers=None):
             if domain == 'wild.example.com':
                 return {'ip': '1.2.3.4'}
             return {'ip': '9.9.9.9'}

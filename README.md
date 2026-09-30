@@ -6,7 +6,7 @@
 
 ## 功能
 
-- **多源收集** — 13 个搜索引擎 + 3 个证书透明度日志 + 15 个开放数据集 + 5 个威胁情报
+- **多源收集** — 13 个搜索引擎 + 3 个证书透明度日志 + 17 个数据集（含 Wayback 历史存档、Common Crawl 开放索引、JS 资产分析）+ 5 个威胁情报
 - **信息丰富** — 对已有结果补全 DNS 解析、HTTP 探测、CDN 识别、IP 地理/ASN 信息
 - **DNS 爆破** — 高并发词表爆破，递归深度扩展
 - **子域置换** — 基于已有子域名生成变异候选（前缀/后缀/数字/连字符插入）
@@ -56,13 +56,21 @@ cp config/.env.example config/.env
 ### 完整收集
 
 ```bash
-# 默认流程：搜索引擎 + 证书 + 数据集 + 爆破 + 置换
+# 默认流程：搜索引擎 + 证书 + 数据集（含 Wayback / CommonCrawl / JS 资产分析）+ 爆破 + 置换
 python justone.py main example.com
 
 # 跳过特定模块
 python justone.py main example.com --no-brute
 python justone.py main example.com --no-altdns
 python justone.py main example.com --no-search
+
+# 批量收集多个域名（每行一个域名或 URL），结果按域名各自输出
+python justone.py main -i targets.txt
+
+# 收集后自动补全 DNS/HTTP/CDN/IP 信息，额外输出全字段 enrich_域名.csv
+# （--enrich 自动启用 --save-db；主结果仍为 collect_域名.csv）
+python justone.py main example.com --enrich
+python justone.py main example.com --enrich --enrich-concurrent 200
 ```
 
 ### 子域爆破
@@ -70,6 +78,9 @@ python justone.py main example.com --no-search
 ```bash
 python justone.py brute example.com
 python justone.py brute example.com -w wordlist.txt -c 1000
+
+# 使用目标域名的权威 NS 解析候选（更快；NS 查询失败自动回退公共 NS 池）
+python justone.py brute example.com --auth-ns
 ```
 
 > 递归爆破（`BRUTE_RECURSIVE=true`）会对每一层命中的子域名继续套用整份字典，开销随"命中数 × 字典大小 × 深度"放大。
@@ -211,7 +222,7 @@ common/
     export.py         ← CSV/JSON/TXT 导出
   search/           ← 13 个搜索引擎
   certificates/     ← crt.sh / CertSpotter / Censys
-  datasets/         ← 15 个开放数据集
+  datasets/         ← 17 个数据源（含 Wayback / CommonCrawl / JS 资产分析）
   dnsquery/         ← MX / NS / SOA / SPF / TXT 查询
   intelligence/     ← Threat Intelligence (AlienVault / VirusTotal 等)
   check/            ← HTTP / DNS / CDN / AXFR / 安全检测等
@@ -256,7 +267,7 @@ pytest -k "test_dnssec"         # 按关键字过滤
 |------|------|
 | 搜索引擎 | Baidu, Bing, Google, Yahoo, Yandex, So, Sogou, Fofa, Hunter, Shodan, ZoomEye, GitHub, Gitee |
 | 证书 | crt.sh, CertSpotter, Censys |
-| 数据集 | Anubis, Chinaz, Circl, Cloudflare, DNSDumpster, FullHunt, HackerTarget, IP138, LeakIX, NetCraft, PassiveDNS, RapidDNS, Robtex, SecurityTrails |
+| 数据集 | Anubis, Chinaz, Circl, Cloudflare, DNSDumpster, FullHunt, HackerTarget, IP138, LeakIX, NetCraft, PassiveDNS, RapidDNS, Robtex, SecurityTrails, Wayback, CommonCrawl, JSAnalyse |
 | 威胁情报 | AlienVault OTX, URLScan.io, ThreatBook, VirusTotal, ThreatMiner |
 | DNS 查询 | MX, NS, SOA, SPF, TXT |
 | IP 定位 | CDN 识别 / CIDR / ASN / ORG 查询 |

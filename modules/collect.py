@@ -28,6 +28,10 @@ collect_config = {
     'module_timeout_override': {
         'search.yahoo.com': 300,
         'virustotal': 1200,
+        # 历史存档 / 开放索引 / JS 抓取类模块耗时较长
+        'web.archive.org': 300,
+        'index.commoncrawl.org': 180,
+        'jsfiles': 240,
     },
     # 收集完成后对结果进行泛解析 DNS 过滤
     'wildcard_filter': True,
@@ -117,7 +121,7 @@ class Collect:
          ('LeakIX', 'Anubis', 'ChinazAPI', 'Chinaz', 'CirclAPI',
           'CloudFlareAPI', 'DNSDumpster', 'FullHuntAPI', 'HackerTarget',
           'IP138', 'NetCraft', 'PassiveDnsAPI', 'RapidDNS', 'Robtex',
-          'SecurityTrailsAPI')),
+          'SecurityTrailsAPI', 'Wayback', 'CommonCrawl', 'JSAnalyse')),
         ('dnsquery', None, 'modules.dnsquery',
          ('MXQuery', 'QueryNS', 'QuerySOA', 'QuerySPF', 'QueryTXT')),
         ('intelligence', 'enable_intelligence', 'modules.intelligence',

@@ -31,6 +31,34 @@ resolve_config = {
 }
 
 
+def _load_ns_pool() -> List[str]:
+    """
+    加载公共 NS 池：内置默认 + data/ 目录的 nameservers 文件，去重保序
+
+    :return: NS 列表（IP 或可解析主机名）
+    """
+    pool = list(resolve_config.get('dns_nameservers', []))
+    data_dir = Path(__file__).parent.parent / 'data'
+    for name in ('nameservers.txt', 'nameservers_cn.txt'):
+        path = data_dir / name
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            entry = line.strip()
+            # 每行一个 NS（IP 或主机名），取首个字段以兼容带注释/端口的行
+            if entry and not entry.startswith('#'):
+                pool.append(entry.split()[0])
+    return list(dict.fromkeys(pool))
+
+
+# 模块加载时初始化 NS 池，_get_resolver 未显式指定 nameservers 时从中抽取
+resolve_config['dns_pool'] = _load_ns_pool()
+
+
 # SOCKS5 并发连接控制：防止大量并发连接淹没代理服务器
 _socks5_semaphore = threading.Semaphore(32)
 
@@ -186,6 +214,12 @@ def is_socks5_dns_enabled() -> bool:
 def set_resolve_config(config: dict):
     """设置全局解析配置"""
     resolve_config.update(config)
+    # 显式传入 dns_nameservers 时并入 NS 池，保持两者一致
+    extra = config.get('dns_nameservers')
+    if extra:
+        resolve_config['dns_pool'] = list(
+            dict.fromkeys(list(resolve_config.get('dns_pool', [])) + list(extra))
+        )
 
 
 # 每线程独立的 Resolver 缓存（按 nameserver 元组复用，避免每次查询重建 Resolver）
@@ -199,10 +233,24 @@ def _get_resolver(nameservers: List[str] = None):
     Resolver 构造需要加载系统配置并初始化 nameserver 列表，批量解析场景下
     每次查询都新建的开销显著；按线程缓存同时规避了跨线程共享实例的问题。
 
-    :param list nameservers: DNS 服务器列表，None 使用全局配置
+    未显式指定 nameservers 时，从 NS 池（dns_pool）为当前线程随机抽取一小撮，
+    使不同线程的查询分散到池内各个解析器上，降低单点限速影响。
+
+    :param list nameservers: DNS 服务器列表，None 使用 NS 池随机子集
     :return: dns.resolver.Resolver 实例
     """
-    ns = tuple(nameservers) if nameservers else tuple(resolve_config.get('dns_nameservers'))
+    if nameservers:
+        ns = tuple(nameservers)
+    else:
+        ns = getattr(_resolver_local, 'subset', None)
+        if ns is None:
+            pool = resolve_config.get('dns_pool') or resolve_config.get('dns_nameservers') or []
+            if pool:
+                ns = tuple(random.sample(pool, k=min(8, len(pool))))
+            else:
+                ns = ()
+            _resolver_local.subset = ns
+
     cache = getattr(_resolver_local, 'resolvers', None)
     if cache is None:
         cache = {}

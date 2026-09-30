@@ -7,16 +7,19 @@ JustOne - 子域名收集工具
 一、基本收集
     python justone.py main example.com                    # 完整收集（搜索+证书+数据集+爆破+置换）
     python justone.py main example.com --no-brute        # 禁用爆破模块
-    python justone.py main example.com --save-db         # 模块结果写入 SQLite（供 enrich 命令使用）
     python justone.py main example.com --no-altdns       # 禁用子域置换模块
     python justone.py main example.com --no-search       # 禁用搜索引擎模块
     python justone.py main example.com --no-cert         # 禁用证书查询模块
     python justone.py main example.com --no-dataset      # 禁用数据集查询模块
+    python justone.py main example.com --save-db         # 模块结果写入 SQLite（供 enrich 命令使用）
+    python justone.py main example.com --enrich          # 收集后自动补全 DNS/HTTP/CDN/IP（额外输出 enrich_域名.csv）
+    python justone.py main -i targets.txt                # 批量收集多个域名（结果按域名各自输出）
 
 二、仅执行爆破
     python justone.py brute example.com                   # 使用默认字典爆破
     python justone.py brute example.com -c 1000          # 设置并发数
     python justone.py brute example.com -w wordlist.txt  # 指定字典文件
+    python justone.py brute example.com --auth-ns        # 使用目标权威 NS 解析（更快）
 
 三、子域置换扩展
     python justone.py altdns example.com                  # 自动收集+爆破后置换
@@ -193,62 +196,29 @@ def callback(
     pass
 
 
-@app.command("main")
-def main(
-    target: str = typer.Argument(..., help="目标域名"),
-    output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径"),
-    format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
-    brute: bool = typer.Option(True, "--brute/--no-brute", help="启用爆破模块"),
-    disable_search: bool = typer.Option(False, "--no-search", help="禁用搜索引擎模块"),
-    disable_cert: bool = typer.Option(False, "--no-cert", help="禁用证书查询模块"),
-    disable_dataset: bool = typer.Option(False, "--no-dataset", help="禁用数据集模块"),
-    altdns: bool = typer.Option(True, "--altdns/--no-altdns", help="启用子域置换模块"),
-    save_db: bool = typer.Option(False, "--save-db", help="将各模块结果写入 SQLite（供 enrich 命令使用）"),
-    no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
-    wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
-):
+def run_collect_pipeline(domain: str, config: dict, wildcard_config: dict, *,
+                         brute: bool = True, altdns: bool = True,
+                         disable_search: bool = False, disable_cert: bool = False,
+                         disable_dataset: bool = False,
+                         output: Optional[Path] = None, format: str = 'csv',
+                         enrich: bool = False, enrich_concurrent: int = 100):
     """
-    收集目标域名的子域名
+    执行单个域名的完整收集流水线：收集 → 爆破 → 置换 → 导出 → 可选信息补全
 
-    示例:
-        python justone.py example.com
-        python justone.py example.com -o results.csv
-        python justone.py example.com --no-brute
+    :param str domain: 注册域名
+    :param dict config: 收集调度器配置
+    :param dict wildcard_config: 泛解析配置
+    :param bool brute: 是否执行爆破
+    :param bool altdns: 是否执行子域置换
+    :param bool disable_search: 是否禁用搜索引擎模块
+    :param bool disable_cert: 是否禁用证书查询模块
+    :param bool disable_dataset: 是否禁用数据集模块
+    :param Path output: 输出文件路径，None 使用默认路径
+    :param str format: 输出格式
+    :param bool enrich: 是否执行信息补全（DNS/HTTP/CDN/IP）
+    :param int enrich_concurrent: 信息补全并发数
     """
-    init_logging(debug=verbose)
-
-    console.print(f"[bold green]JustOne[/bold green] 开始收集子域名: [cyan]{target}[/cyan]")
-
-    domain_obj = Domain(target)
-    main_domain = domain_obj.registered()
-
-    if not main_domain:
-        console.print(f"[bold red]错误:[/bold red] 无法解析目标域名: {target}")
-        raise typer.Exit(1)
-
-    if main_domain != target:
-        console.print(f"[dim]注册域名: {main_domain}[/dim]")
-
-    config = {
-        'enable_search': not disable_search,
-        'enable_certificate': not disable_cert,
-        'enable_dataset': not disable_dataset,
-        'save_module_result': False,
-        'save_db': save_db,
-        'proxy_enable': settings.proxy_enable,
-        'LEAKIX_API': settings.leakix_api,
-        'wildcard_filter': not no_wildcard,
-        'wildcard_probes': settings.wildcard_probes,
-        'wildcard_cidr': wildcard_cidr,
-    }
-
-    wildcard_config = {
-        'wildcard_check': not no_wildcard,
-        'wildcard_deal': not no_wildcard,
-        'wildcard_probes': settings.wildcard_probes,
-        'wildcard_cidr': wildcard_cidr,
-    }
+    console.print(f"[bold green]JustOne[/bold green] 开始收集子域名: [cyan]{domain}[/cyan]")
 
     subdomains = set()
     total_elapse = 0
@@ -263,7 +233,7 @@ def main(
         start = time.time()
         sys.stdout.write('  执行信息收集模块... ')
         sys.stdout.flush()
-        collect = Collect(main_domain, config)
+        collect = Collect(domain, config)
         subdomains = set(collect.run())
         total_elapse += collect.elapse or 0
         show_progress('完成', start)
@@ -273,7 +243,7 @@ def main(
         start = time.time()
         sys.stdout.write('  执行爆破模块... ')
         sys.stdout.flush()
-        brute_module = Brute(main_domain, wildcard_config)
+        brute_module = Brute(domain, wildcard_config)
         brute_subdomains = brute_module.run()
         subdomains.update(brute_subdomains)
         total_elapse += brute_module.get_elapse() or 0
@@ -284,27 +254,164 @@ def main(
         start = time.time()
         sys.stdout.write('  执行子域置换... ')
         sys.stdout.flush()
-        altdns_module = Altdns(main_domain, subdomains, wildcard_config)
+        altdns_module = Altdns(domain, subdomains, wildcard_config)
         altdns_subdomains = altdns_module.run()
         subdomains.update(altdns_subdomains)
         total_elapse += altdns_module.get_elapse() or 0
         show_progress('完成', start)
         print()
 
-    if subdomains:
-        console.print(f"\n[bold green]完成![/bold green] 共发现 [yellow]{len(subdomains)}[/yellow] 个子域名")
-        console.print(f"[dim]总耗时: {total_elapse:.1f} 秒[/dim]")
-
-        if not output:
-            output = get_default_output(main_domain, 'collect', format)
-        if format == 'txt':
-            export_subdomains(sorted(subdomains), output, 'txt')
-        else:
-            results = [{'subdomain': s} for s in sorted(subdomains)]
-            export_results(results, output, format)
-        console.print(f"[green]结果已保存到: {output}[/green]")
-    else:
+    if not subdomains:
         console.print("\n[yellow]未发现子域名[/yellow]")
+        return
+
+    console.print(f"\n[bold green]完成![/bold green] 共发现 [yellow]{len(subdomains)}[/yellow] 个子域名")
+    console.print(f"[dim]总耗时: {total_elapse:.1f} 秒[/dim]")
+
+    if not output:
+        output = get_default_output(domain, 'collect', format)
+    if format == 'txt':
+        export_subdomains(sorted(subdomains), output, 'txt')
+    else:
+        results = [{'subdomain': s} for s in sorted(subdomains)]
+        export_results(results, output, format)
+    console.print(f"[green]结果已保存到: {output}[/green]")
+
+    if enrich:
+        _enrich_domain(domain, enrich_concurrent, format)
+
+
+def _enrich_domain(domain: str, concurrent: int, format: str):
+    """
+    对指定域名的 SQLite 记录执行信息补全，并导出全字段结果
+
+    需先以 --save-db 收集（--enrich 会自动启用），
+    导出文件为 results/enrich_<域名>.<格式>。
+
+    :param str domain: 注册域名
+    :param int concurrent: 补全并发数
+    :param str format: 导出格式
+    """
+    db_file = Path(__file__).parent / 'results' / 'result.sqlite3'
+    if not db_file.exists():
+        console.print("[yellow]未找到 SQLite 数据库（results/result.sqlite3），跳过信息补全[/yellow]")
+        return
+
+    table = domain.replace('.', '_')
+    console.print(f"[cyan]执行信息补全 (enrich): {table}[/cyan]")
+    enricher = Enrich(str(db_file), concurrent=concurrent)
+    try:
+        enricher.load(table)
+        if not enricher.records:
+            console.print(f"[yellow]数据库中没有 {domain} 的记录，跳过补全[/yellow]")
+            return
+
+        asyncio.run(enricher.enrich(show_progress=True))
+        # 重新加载补全后的记录并导出全字段结果
+        records = utils.sort_by_subdomain(enricher.load(table))
+        output = get_default_output(domain, 'enrich', format)
+        if format == 'txt':
+            export_subdomains([r['subdomain'] for r in records], output, 'txt')
+        else:
+            export_results(records, output, format)
+        console.print(f"[green]补全结果已保存到: {output}[/green]")
+    finally:
+        enricher.close()
+
+
+@app.command("main")
+def main(
+    target: Optional[str] = typer.Argument(None, help="目标域名（与 -i 二选一）"),
+    input_file: Optional[Path] = typer.Option(None, "--input", "-i", help="目标文件（每行一个域名或 URL，批量收集）"),
+    output: Optional[Path] = typer.Option(None, "--output", "-o", help="输出文件路径（批量模式下忽略，按域名各自输出）"),
+    format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
+    brute: bool = typer.Option(True, "--brute/--no-brute", help="启用爆破模块"),
+    disable_search: bool = typer.Option(False, "--no-search", help="禁用搜索引擎模块"),
+    disable_cert: bool = typer.Option(False, "--no-cert", help="禁用证书查询模块"),
+    disable_dataset: bool = typer.Option(False, "--no-dataset", help="禁用数据集模块"),
+    altdns: bool = typer.Option(True, "--altdns/--no-altdns", help="启用子域置换模块"),
+    save_db: bool = typer.Option(False, "--save-db", help="将各模块结果写入 SQLite（供 enrich 命令使用）"),
+    enrich: bool = typer.Option(False, "--enrich", help="收集后自动补全 DNS/HTTP/CDN/IP 信息，额外输出 enrich_域名.csv（自动启用 --save-db）"),
+    enrich_concurrent: int = typer.Option(100, "--enrich-concurrent", help="enrich 补全并发数（默认 100）"),
+    no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
+    wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
+):
+    """
+    收集目标域名的子域名
+
+    示例:
+        python justone.py example.com
+        python justone.py example.com -o results.csv
+        python justone.py example.com --no-brute
+        python justone.py example.com --enrich
+        python justone.py -i targets.txt
+    """
+    init_logging(debug=verbose)
+
+    # 解析目标：-i 文件（批量）或单个域名
+    domains: list = []
+    if input_file:
+        if not input_file.exists():
+            console.print(f"[bold red]错误: 文件不存在: {input_file}[/bold red]")
+            raise typer.Exit(1)
+        try:
+            domains = utils.read_target_file(str(input_file))
+        except OSError as e:
+            console.print(f"[bold red]错误: 读取目标文件失败: {e}[/bold red]")
+            raise typer.Exit(1)
+        if not domains:
+            console.print("[bold red]错误: 目标文件中没有有效的域名[/bold red]")
+            raise typer.Exit(1)
+        console.print(f"[bold cyan]从文件加载 {len(domains)} 个目标域名[/bold cyan]")
+    elif target:
+        main_domain = Domain(target).registered()
+        if not main_domain:
+            console.print(f"[bold red]错误:[/bold red] 无法解析目标域名: {target}")
+            raise typer.Exit(1)
+        if main_domain != target:
+            console.print(f"[dim]注册域名: {main_domain}[/dim]")
+        domains = [main_domain]
+    else:
+        console.print("[bold red]错误: 请指定目标域名或使用 -i 指定目标文件[/bold red]")
+        raise typer.Exit(1)
+
+    config = {
+        'enable_search': not disable_search,
+        'enable_certificate': not disable_cert,
+        'enable_dataset': not disable_dataset,
+        'save_module_result': False,
+        'save_db': save_db or enrich,
+        'proxy_enable': settings.proxy_enable,
+        'LEAKIX_API': settings.leakix_api,
+        'wildcard_filter': not no_wildcard,
+        'wildcard_probes': settings.wildcard_probes,
+        'wildcard_cidr': wildcard_cidr,
+    }
+
+    wildcard_config = {
+        'wildcard_check': not no_wildcard,
+        'wildcard_deal': not no_wildcard,
+        'wildcard_probes': settings.wildcard_probes,
+        'wildcard_cidr': wildcard_cidr,
+    }
+
+    batch = len(domains) > 1
+    if batch and output:
+        console.print("[dim]批量模式: 忽略 -o，按域名各自输出 collect_<域名>.<格式>[/dim]")
+
+    for index, main_domain in enumerate(domains, 1):
+        if batch:
+            console.rule(f"[cyan][{index}/{len(domains)}] {main_domain}")
+        run_collect_pipeline(
+            main_domain, config, wildcard_config,
+            brute=brute, altdns=altdns,
+            disable_search=disable_search, disable_cert=disable_cert,
+            disable_dataset=disable_dataset,
+            output=None if batch else output,
+            format=format,
+            enrich=enrich, enrich_concurrent=enrich_concurrent,
+        )
 
 
 @app.command()
@@ -474,6 +581,7 @@ def brute(
     format: str = typer.Option("csv", "--format", "-f", help="输出格式: csv/json/txt"),
     wordlist: Optional[Path] = typer.Option(None, "--wordlist", "-w", help="爆破字典路径"),
     concurrent: int = typer.Option(2000, "--concurrent", "-c", help="并发数"),
+    auth_ns: bool = typer.Option(False, "--auth-ns", help="使用目标域名权威 NS 解析（更快，NS 查询失败自动回退公共 NS 池）"),
     no_wildcard: bool = typer.Option(False, "--no-wildcard", help="禁用泛解析检测与过滤"),
     wildcard_cidr: bool = typer.Option(False, "--wildcard-cidr", help="启用同 /24 网段泛解析匹配"),
 ):
@@ -483,6 +591,7 @@ def brute(
     示例:
         python justone.py brute example.com
         python justone.py brute example.com -w wordlist.txt -c 1000
+        python justone.py brute example.com --auth-ns
     """
     init_logging()
 
@@ -494,6 +603,7 @@ def brute(
     config = {
         'concurrent': concurrent,
         'wordlist': str(wordlist) if wordlist else None,
+        'authoritative_ns': auth_ns,
         'wildcard_check': not no_wildcard,
         'wildcard_deal': not no_wildcard,
         'wildcard_probes': settings.wildcard_probes,

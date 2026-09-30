@@ -71,7 +71,7 @@ modules/
   collect.py        ← Collect scheduler. Async (asyncio) scheduling with Semaphore concurrency + per-module timeout.
   search/           ← 13 search engines (baidu, bing, google, yahoo, fofa, hunter, shodan, zoomeye, so, sogou, yandex, gitee, github)
   certificates/     ← crtsh, certspotter, censys
-  datasets/         ← 17 modules (anubis, chinaz, circl, cloudflare, dnsdb, dnsdumpster, fullhunt, hackertarget, ip138, leakix, netcraft, passivedns, rapiddns, robtex, securitytrails, sitedossier)
+  datasets/         ← 17 sources (anubis, chinaz, circl, cloudflare, dnsdumpster, fullhunt, hackertarget, ip138, leakix, netcraft, passivedns, rapiddns, robtex, securitytrails, wayback, commoncrawl, jsanalyse)
   check/            ← http, dns, cdn, axfr, cert, csp, nsec, robots, sitemap, crossdomain
   dnsquery/         ← mx, ns, soa, spf, txt
   intelligence/     ← otx, urlscan, threatbook, virustotal, threatminer

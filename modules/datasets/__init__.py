@@ -17,6 +17,9 @@ from .passivedns_api import PassiveDnsAPI, run as passivedns_api_run
 from .rapiddns import RapidDNS, run as rapiddns_run
 from .robtex import Robtex, run as robtex_run
 from .securitytrails_api import SecurityTrailsAPI, run as securitytrails_api_run
+from .wayback import Wayback, run as wayback_run
+from .commoncrawl import CommonCrawl, run as commoncrawl_run
+from .jsanalyse import JSAnalyse, run as jsanalyse_run
 
 __all__ = [
     'LeakIX', 'leakix_run',
@@ -34,4 +37,7 @@ __all__ = [
     'RapidDNS', 'rapiddns_run',
     'Robtex', 'robtex_run',
     'SecurityTrailsAPI', 'securitytrails_api_run',
+    'Wayback', 'wayback_run',
+    'CommonCrawl', 'commoncrawl_run',
+    'JSAnalyse', 'jsanalyse_run',
 ]

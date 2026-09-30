@@ -20,8 +20,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-import dns.resolver
-
 from config.logging import logger
 from common import resolve
 from common import utils
@@ -77,10 +75,7 @@ def _resolve_aaaa(subdomain: str, nameservers: Optional[List[str]] = None) -> Se
     :param list nameservers: DNS 服务器列表
     :return: IPv6 地址集合
     """
-    resolver = dns.resolver.Resolver()
-    resolver.nameservers = nameservers or resolve.resolve_config.get('dns_nameservers')
-    resolver.timeout = 5
-    resolver.lifetime = 10
+    resolver = resolve._get_resolver(nameservers)
     try:
         answer = resolver.resolve(subdomain, 'AAAA', tcp=resolve.is_socks5_dns_enabled())
         return {str(rdata) for rdata in answer}
