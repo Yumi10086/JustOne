@@ -108,5 +108,14 @@ class TestJSAnalyse(unittest.TestCase):
         self.assertEqual(j.max_scripts, 3)
 
 
+class TestSortBySubdomain(unittest.TestCase):
+    def test_none_subdomain_sorted_last(self):
+        """subdomain 为 None 的占位行不应导致排序崩溃"""
+        from common.utils import sort_by_subdomain
+        data = [{'subdomain': 'b.com'}, {'subdomain': None}, {'subdomain': 'a.com'}]
+        result = sort_by_subdomain(data)
+        self.assertEqual([r['subdomain'] for r in result][:2], ['a.com', 'b.com'])
+
+
 if __name__ == '__main__':
     unittest.main()

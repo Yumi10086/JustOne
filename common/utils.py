@@ -688,7 +688,11 @@ def decode_resp_text(resp):
 
 
 def sort_by_subdomain(data):
-    return sorted(data, key=lambda item: item.get('subdomain'))
+    """按子域名排序（subdomain 为 None 的空占位记录排在最后）"""
+    return sorted(
+        data,
+        key=lambda item: (item.get('subdomain') is None, item.get('subdomain') or ''),
+    )
 
 
 def looks_like_ip(maybe_ip):

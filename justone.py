@@ -307,8 +307,10 @@ def _enrich_domain(domain: str, concurrent: int, format: str):
             return
 
         asyncio.run(enricher.enrich(show_progress=True))
-        # 重新加载补全后的记录并导出全字段结果
-        records = utils.sort_by_subdomain(enricher.load(table))
+        # 重新加载补全后的记录并导出全字段结果；
+        # 过滤 gen_result 为"0 发现模块"生成的空占位行（subdomain 为 None）
+        records = [r for r in enricher.load(table) if r.get('subdomain')]
+        records = utils.sort_by_subdomain(records)
         output = get_default_output(domain, 'enrich', format)
         if format == 'txt':
             export_subdomains([r['subdomain'] for r in records], output, 'txt')
